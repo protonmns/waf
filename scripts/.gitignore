@@ -1,2 +1,5 @@
 *
 !.gitignore
+!coverage-gate.sh
+!create-worktrees.sh
+!setup-worktree-env.sh

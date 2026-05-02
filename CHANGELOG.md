@@ -11,6 +11,50 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **FR-014 XSS enhance** — iterative JSON walker (hard depth cap 64 so the
+  engine cannot stack-overflow on malicious nesting), form-urlencoded
+  scanner, Content-Type-aware dispatch. `text/markdown` body-skip mitigates
+  false positives on code-block snippets.
+- **FR-015 path traversal enhance** — adopts shared `request_targets()` so
+  recursive-decoded variants are covered (`%252e%252e` no longer slips
+  past); new anchored patterns for `/etc/<sensitive>`, `/proc/<pid>/…`,
+  `\windows\system32`, `boot.ini` / `win.ini`.
+- **FR-016 SSRF detection (NEW)** — RFC1918 / loopback / link-local / cloud
+  metadata (AWS `169.254.169.254`, GCP, Alibaba `100.100.100.200`, Consul);
+  obfuscated IPs (hex, octal, decimal dword, IPv6-mapped). Userinfo bypass
+  `http://google.com@169.254.169.254/` resolves to the metadata IP via
+  `url::Url::host()`. Opt-in allowlist via
+  `defense_config.ssrf_outbound_host_allowlist`.
+- **FR-017 header injection (NEW)** — raw + `%0d%0a` / `%250d%250a` CRLF in
+  header values and names; `Host` header whitelist (`host_inbound_whitelist`)
+  with IPv6-bracket awareness; `X-Forwarded-For` leftmost-private + max-hops.
+- **FR-018 brute force + credential stuffing (NEW)** — consumes the
+  `Check::on_response` default hook. BF-001: `(user_hash, ip)` failure
+  counter ≥ `bf_max_per_user`. BF-002: password sprayed against ≥
+  `bf_spray_threshold` distinct users from same IP. Status-code-only v1
+  (401/403); body-regex deferred. SHA-256-truncated usernames/passwords —
+  never plaintext in state.
+- **FR-019 scanner recon enhance** — per-IP sliding-window state with
+  endpoint enumeration (distinct-path threshold) and OPTIONS preflight
+  abuse. Bounded at `scanner_max_ips` (default 100k) with oldest-10%
+  eviction against IPv6-rotating OOM vector.
+- **FR-020 request body abuse (NEW)** — declared `Content-Length` size
+  gate (64 KiB to match gateway `BODY_PREVIEW_LIMIT`), magic-byte
+  Content-Type mismatch (JSON/XML/HTML/ZIP/GZIP), iterative byte-scan JSON
+  depth pre-check (bails before any parser allocation), key-count explosion
+  via iterative `Value` walker.
+- **Detection framework** — `Phase` enum gets 4 new variants (`Ssrf`,
+  `HeaderInjection`, `BruteForce`, `RequestBodyAbuse`). `Check` trait
+  extended with default-impl `on_response(&self, _ctx, _status)` hook.
+  `WafEngine::on_response(ctx, status)` dispatcher for gateway wiring.
+  `Clock` trait + `SystemClock` + `MockClock` test fixture so stateful
+  checks advance time deterministically without sleeping.
+- **Coverage infra** — `Dockerfile.coverage` (rust:1.91 + `cargo-llvm-cov`
+  0.8.5 pinned), `scripts/coverage-gate.sh` + smoke fixtures,
+  `scripts/create-worktrees.sh` + `setup-worktree-env.sh`, CI `coverage`
+  job (informational — gate flips to enforcing after the waf-engine
+  baseline-raise follow-up lands).
+
 - **FR-008 access lists** — Phase-0 gate ahead of the 16-phase rule pipeline:
   per-tier IP whitelist (Patricia trie via `ip_network_table`), IP blacklist,
   and per-tier Host (FQDN) whitelist. Runs Host gate → IP blacklist →

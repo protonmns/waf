@@ -1,27 +1,43 @@
 pub mod anti_hotlink;
+pub mod body_abuse;
+pub(crate) mod body_abuse_walker;
 pub mod bot;
+pub mod brute_force;
+pub(crate) mod brute_force_extractors;
+pub(crate) mod brute_force_state;
 pub mod cc;
 pub mod dir_traversal;
 pub mod geo;
+pub mod header_injection;
+pub(crate) mod header_injection_patterns;
 pub mod owasp;
 pub mod rce;
 pub mod scanner;
+pub(crate) mod scanner_state;
 pub mod sensitive;
 pub mod sql_injection;
 pub(crate) mod sql_injection_patterns;
 pub(crate) mod sql_injection_scanners;
+pub mod ssrf;
+pub(crate) mod ssrf_patterns;
+pub(crate) mod ssrf_scanners;
 pub mod xss;
+pub(crate) mod xss_scanners;
 
 pub use anti_hotlink::AntiHotlinkCheck;
+pub use body_abuse::RequestBodyAbuseCheck;
 pub use bot::BotCheck;
+pub use brute_force::BruteForceCheck;
 pub use cc::CcCheck;
 pub use dir_traversal::DirTraversalCheck;
 pub use geo::{GeoCheck, GeoRule, GeoRuleMode};
+pub use header_injection::HeaderInjectionCheck;
 pub use owasp::OWASPCheck;
 pub use rce::RceCheck;
 pub use scanner::ScannerCheck;
 pub use sensitive::SensitiveCheck;
 pub use sql_injection::SqlInjectionCheck;
+pub use ssrf::SsrfCheck;
 pub use xss::XssCheck;
 
 use waf_common::{DetectionResult, RequestCtx};
@@ -33,6 +49,68 @@ use waf_common::{DetectionResult, RequestCtx};
 /// short-circuits on the first `Some(result)`.
 pub trait Check: Send + Sync {
     fn check(&self, ctx: &RequestCtx) -> Option<DetectionResult>;
+
+    /// Default no-op response hook. Override in checks that need upstream
+    /// status (FR-018 brute force, FR-019 4xx-burst). Body is NOT exposed in
+    /// v1: Pingora `response_filter` gives headers + status only; the body
+    /// path via `response_body_filter` is deferred.
+    fn on_response(&self, _ctx: &RequestCtx, _status: u16) {}
+}
+
+/// Monotonic clock abstraction so stateful checks (FR-018 brute-force,
+/// FR-019 scanner sliding-window) can be tested without sleeping.
+///
+/// Production wires `SystemClock`; tests inject `MockClock` and call
+/// `advance()` to move time forward deterministically.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> std::time::Instant;
+}
+
+/// Real-time `Clock` implementation backed by `Instant::now()`.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+}
+
+#[cfg(test)]
+pub mod test_clock {
+    use super::Clock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Test fixture clock — advances only when `advance()` is called.
+    pub struct MockClock {
+        offset_nanos: AtomicU64,
+        base: std::time::Instant,
+    }
+
+    impl MockClock {
+        pub fn new() -> Self {
+            Self {
+                offset_nanos: AtomicU64::new(0),
+                base: std::time::Instant::now(),
+            }
+        }
+
+        pub fn advance(&self, dur: std::time::Duration) {
+            let nanos = u64::try_from(dur.as_nanos()).unwrap_or(u64::MAX);
+            self.offset_nanos.fetch_add(nanos, Ordering::SeqCst);
+        }
+    }
+
+    impl Default for MockClock {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now(&self) -> std::time::Instant {
+            self.base + std::time::Duration::from_nanos(self.offset_nanos.load(Ordering::SeqCst))
+        }
+    }
 }
 
 // ─── Shared utilities ─────────────────────────────────────────────────────────

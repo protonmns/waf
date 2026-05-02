@@ -154,6 +154,14 @@ pub enum Phase {
     GeoIp = 17,
     /// Community threat intelligence blocklist
     Community = 18,
+    /// Server-Side Request Forgery (FR-016)
+    Ssrf = 19,
+    /// HTTP header injection / smuggling (FR-017)
+    HeaderInjection = 20,
+    /// Authentication brute-force / credential spraying (FR-018)
+    BruteForce = 21,
+    /// Oversized / deeply-nested request body abuse (FR-020)
+    RequestBodyAbuse = 22,
 }
 
 impl std::fmt::Display for Phase {
@@ -177,6 +185,10 @@ impl std::fmt::Display for Phase {
             Self::CrowdSec => write!(f, "CrowdSec"),
             Self::GeoIp => write!(f, "GeoIP"),
             Self::Community => write!(f, "Community"),
+            Self::Ssrf => write!(f, "SSRF"),
+            Self::HeaderInjection => write!(f, "Header Injection"),
+            Self::BruteForce => write!(f, "Brute Force"),
+            Self::RequestBodyAbuse => write!(f, "Request Body Abuse"),
         }
     }
 }
@@ -339,6 +351,69 @@ pub struct DefenseConfig {
     /// always on regardless of this flag.
     #[serde(default = "bool_false")]
     pub block_scripted_clients: bool,
+
+    // ── FR-016 SSRF ──────────────────────────────────────────────────────
+    #[serde(default = "bool_true")]
+    pub ssrf: bool,
+    #[serde(default = "default_ssrf_dns_timeout_ms")]
+    pub ssrf_dns_timeout_ms: u64,
+    /// Outbound host allow-list: hosts permitted despite RFC1918 / loopback
+    /// match (e.g. internal services intentionally reached via private IP).
+    #[serde(default)]
+    pub ssrf_outbound_host_allowlist: Vec<String>,
+
+    // ── FR-017 Header injection ──────────────────────────────────────────
+    #[serde(default = "bool_true")]
+    pub header_injection: bool,
+    #[serde(default = "default_xf2_max_hops")]
+    pub xf2_max_hops: usize,
+    /// Inbound `Host` header whitelist. Empty disables host validation.
+    #[serde(default)]
+    pub host_inbound_whitelist: Vec<String>,
+
+    // ── FR-018 Brute force ───────────────────────────────────────────────
+    #[serde(default = "bool_true")]
+    pub brute_force: bool,
+    #[serde(default = "default_bf_window_secs")]
+    pub bf_window_secs: u64,
+    #[serde(default = "default_bf_max_per_user")]
+    pub bf_max_per_user: usize,
+    #[serde(default = "default_bf_spray_threshold")]
+    pub bf_spray_threshold: usize,
+    #[serde(default = "default_bf_login_routes")]
+    pub bf_login_routes: Vec<String>,
+
+    // ── FR-019 Scanner sliding-window state ──────────────────────────────
+    /// Sliding-window length (seconds) for endpoint-enum + OPTIONS-abuse
+    /// detection. Same value used for both — keeps the config terse.
+    #[serde(default = "default_scanner_window_secs")]
+    pub scanner_window_secs: u64,
+    /// Distinct paths from a single `client_ip` in the window above before
+    /// the scanner check fires.
+    #[serde(default = "default_scanner_endpoint_enum_threshold")]
+    pub scanner_endpoint_enum_threshold: usize,
+    /// OPTIONS requests from a single `client_ip` in the window above
+    /// before the scanner check fires (CORS preflight is the legitimate cap).
+    #[serde(default = "default_scanner_options_threshold")]
+    pub scanner_options_threshold: usize,
+    /// Hard cap on per-IP entries kept in `ScannerState`. Beyond this the
+    /// oldest 10% (by last-touched timestamp) are evicted to prevent an
+    /// IPv6-rotating attacker from OOM-ing the WAF (Red Team Finding #6).
+    #[serde(default = "default_scanner_max_ips")]
+    pub scanner_max_ips: usize,
+
+    // ── FR-020 Request body abuse ────────────────────────────────────────
+    #[serde(default = "bool_true")]
+    pub body_abuse: bool,
+    /// Hard ceiling on inspected body bytes. Defaults to 64 KiB to match the
+    /// gateway's `BODY_PREVIEW_LIMIT`; bumping it only matters once that cap
+    /// is also raised upstream.
+    #[serde(default = "default_max_body_size")]
+    pub max_body_size: usize,
+    #[serde(default = "default_max_json_depth")]
+    pub max_json_depth: usize,
+    #[serde(default = "default_max_json_keys")]
+    pub max_json_keys: usize,
 }
 
 const fn bool_true() -> bool {
@@ -362,6 +437,45 @@ const fn default_cc_ban_duration_secs() -> u64 {
 const fn default_owasp_paranoia() -> u8 {
     1
 }
+const fn default_ssrf_dns_timeout_ms() -> u64 {
+    50
+}
+const fn default_xf2_max_hops() -> usize {
+    5
+}
+const fn default_bf_window_secs() -> u64 {
+    900
+}
+const fn default_bf_max_per_user() -> usize {
+    5
+}
+const fn default_bf_spray_threshold() -> usize {
+    5
+}
+fn default_bf_login_routes() -> Vec<String> {
+    vec!["/login".to_string(), "/api/auth/token".to_string()]
+}
+const fn default_scanner_window_secs() -> u64 {
+    60
+}
+const fn default_scanner_endpoint_enum_threshold() -> usize {
+    30
+}
+const fn default_scanner_options_threshold() -> usize {
+    20
+}
+const fn default_scanner_max_ips() -> usize {
+    100_000
+}
+const fn default_max_body_size() -> usize {
+    64 * 1024
+}
+const fn default_max_json_depth() -> usize {
+    100
+}
+const fn default_max_json_keys() -> usize {
+    10_000
+}
 
 impl Default for DefenseConfig {
     fn default() -> Self {
@@ -381,6 +495,25 @@ impl Default for DefenseConfig {
             cc_ban_duration_secs: default_cc_ban_duration_secs(),
             block_scripted_clients: false,
             owasp_paranoia: default_owasp_paranoia(),
+            ssrf: true,
+            ssrf_dns_timeout_ms: default_ssrf_dns_timeout_ms(),
+            ssrf_outbound_host_allowlist: Vec::new(),
+            header_injection: true,
+            xf2_max_hops: default_xf2_max_hops(),
+            host_inbound_whitelist: Vec::new(),
+            brute_force: true,
+            bf_window_secs: default_bf_window_secs(),
+            bf_max_per_user: default_bf_max_per_user(),
+            bf_spray_threshold: default_bf_spray_threshold(),
+            bf_login_routes: default_bf_login_routes(),
+            scanner_window_secs: default_scanner_window_secs(),
+            scanner_endpoint_enum_threshold: default_scanner_endpoint_enum_threshold(),
+            scanner_options_threshold: default_scanner_options_threshold(),
+            scanner_max_ips: default_scanner_max_ips(),
+            body_abuse: true,
+            max_body_size: default_max_body_size(),
+            max_json_depth: default_max_json_depth(),
+            max_json_keys: default_max_json_keys(),
         }
     }
 }

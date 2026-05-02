@@ -137,3 +137,56 @@ jobs:
 #        with:
 #          name: device-fp-coverage
 #          path: cov-device-fp.txt
+  # FR-014..FR-020 detection plan, Phase 00: per-crate line-coverage gate
+  # at >=90% on `waf-engine` and `waf-common`. Tests + benches are excluded
+  # via --ignore-filename-regex so we measure production source only.
+  #
+  # Phase 00 PR keeps this job at `continue-on-error: true` while the
+  # baseline test write-up lands; the first FR PR (Phase 01) flips the
+  # flag so the gate is enforcing from then on (plan §Validation V1).
+  coverage:
+    name: Coverage gate (>=90%)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Smoke-test coverage-gate parser against fixtures
+        # Pin Finding #13: parser must accept the real `--summary-only`
+        # column layout. Run before the live gate so a parser regression
+        # fails fast with a clear message.
+        run: |
+          bash scripts/coverage-gate.sh tests/fixtures/llvm-cov-summary-pass.txt 90
+          if bash scripts/coverage-gate.sh tests/fixtures/llvm-cov-summary-fail.txt 90; then
+            echo "::error::coverage-gate.sh accepted a sub-threshold fixture"
+            exit 1
+          fi
+      - name: Run llvm-cov for waf-engine
+        run: |
+          cargo llvm-cov -p waf-engine \
+            --ignore-filename-regex '/tests/|/benches/' \
+            --summary-only | tee cov-engine.txt
+      - name: Enforce waf-engine 90% gate
+        run: bash scripts/coverage-gate.sh cov-engine.txt 90
+      - name: Run llvm-cov for waf-common
+        run: |
+          cargo llvm-cov -p waf-common \
+            --ignore-filename-regex '/tests/|/benches/' \
+            --summary-only | tee cov-common.txt
+      - name: Enforce waf-common 90% gate
+        run: bash scripts/coverage-gate.sh cov-common.txt 90
+      - name: Upload coverage summaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cov-summaries
+          path: |
+            cov-engine.txt
+            cov-common.txt

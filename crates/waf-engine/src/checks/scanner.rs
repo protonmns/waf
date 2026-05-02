@@ -1,9 +1,11 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use regex::RegexSet;
 use waf_common::{DetectionResult, Phase, RequestCtx};
 
-use super::Check;
+use super::scanner_state::ScannerState;
+use super::{Check, Clock, SystemClock};
 
 static SCANNER_UA_DESCS: &[&str] = &[
     "sqlmap (SQL injection scanner)",
@@ -119,12 +121,39 @@ static SCRIPTED_CLIENT_UA_SET: LazyLock<RegexSet> = LazyLock::new(|| {
     }
 });
 
-/// Security scanner / automated tool detection checker (User-Agent based).
-pub struct ScannerCheck;
+/// Security scanner / automated tool detection checker.
+///
+/// Combines three signals:
+/// 1. User-Agent regex match against known scanner / scripted-client UAs
+///    (always on; the original behaviour, untouched).
+/// 2. Endpoint enumeration — too many distinct paths from one `client_ip`
+///    inside `defense_config.scanner_window_secs` (FR-019).
+/// 3. OPTIONS preflight abuse — too many OPTIONS requests inside the same
+///    window (FR-019).
+///
+/// 4xx / 5xx burst detection is deferred until the response-side hook is
+/// wired in Phase 07; the state machine is already shape-compatible.
+pub struct ScannerCheck {
+    state: Arc<ScannerState>,
+}
 
 impl ScannerCheck {
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self::with_clock(Arc::new(SystemClock))
+    }
+
+    pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        // 100k cap matches DefenseConfig::default().scanner_max_ips. Per-host
+        // overrides take effect at request time via the threshold reads.
+        Self {
+            state: Arc::new(ScannerState::new(100_000, clock)),
+        }
+    }
+
+    /// Expose the inner state so an engine bootstrap can drive periodic
+    /// `prune_older_than` calls (Phase 07/08 wiring).
+    pub fn state(&self) -> Arc<ScannerState> {
+        Arc::clone(&self.state)
     }
 }
 
@@ -171,6 +200,42 @@ impl Check for ScannerCheck {
                     detail: format!("{desc} User-Agent detected (block_scripted_clients=true)"),
                 });
             }
+        }
+
+        // FR-019 sliding-window heuristics. Dedup the path by stripping query
+        // so health-check-with-cachebuster traffic does not look like enum.
+        let dc = &ctx.host_config.defense_config;
+        let window = Duration::from_secs(dc.scanner_window_secs);
+
+        if ctx.method.eq_ignore_ascii_case("OPTIONS") {
+            let count = self.state.record_options(ctx.client_ip, window);
+            if count >= dc.scanner_options_threshold {
+                return Some(DetectionResult {
+                    rule_id: Some("SCAN-OPT-001".to_string()),
+                    rule_name: "Scanner".to_string(),
+                    phase: Phase::Scanner,
+                    detail: format!(
+                        "OPTIONS preflight abuse: {count} requests from {ip} in {secs}s",
+                        ip = ctx.client_ip,
+                        secs = dc.scanner_window_secs,
+                    ),
+                });
+            }
+        }
+
+        let path_key = ctx.path.split('?').next().unwrap_or(ctx.path.as_str());
+        let distinct = self.state.record_path(ctx.client_ip, path_key, window);
+        if distinct >= dc.scanner_endpoint_enum_threshold {
+            return Some(DetectionResult {
+                rule_id: Some("SCAN-ENUM-001".to_string()),
+                rule_name: "Scanner".to_string(),
+                phase: Phase::Scanner,
+                detail: format!(
+                    "endpoint enumeration: {distinct} distinct paths from {ip} in {secs}s",
+                    ip = ctx.client_ip,
+                    secs = dc.scanner_window_secs,
+                ),
+            });
         }
 
         None
@@ -297,6 +362,131 @@ mod tests {
                 panic!("sqlmap UA should always be blocked (strict={strict})");
             });
             assert_eq!(result.rule_name, "Scanner");
+        }
+    }
+
+    // ─── FR-019 sliding-window heuristics ────────────────────────────────
+
+    use crate::checks::test_clock::MockClock;
+    use std::time::Duration;
+    #[allow(clippy::duration_suboptimal_units)]
+    const TEST_WINDOW_EXPIRED: Duration = Duration::from_secs(120);
+
+    fn make_ctx_with_method_path(method: &str, path: &str, ip: &str) -> RequestCtx {
+        let mut ctx = make_ctx_with("Mozilla/5.0", false);
+        ctx.method = method.to_string();
+        ctx.path = path.to_string();
+        ctx.client_ip = ip.parse().unwrap();
+        ctx
+    }
+
+    #[test]
+    fn endpoint_enumeration_threshold_triggers_detection() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        // Default threshold is 30 distinct paths.
+        for i in 0..29 {
+            let ctx = make_ctx_with_method_path("GET", &format!("/p{i}"), "5.6.7.8");
+            assert!(checker.check(&ctx).is_none(), "should not fire at {i} distinct paths");
+        }
+        let ctx = make_ctx_with_method_path("GET", "/p30", "5.6.7.8");
+        let det = checker.check(&ctx).expect("hit at 30 distinct");
+        assert_eq!(det.rule_id.as_deref().unwrap_or(""), "SCAN-ENUM-001");
+    }
+
+    #[test]
+    fn endpoint_enumeration_window_expires() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock.clone());
+        for i in 0..29 {
+            let ctx = make_ctx_with_method_path("GET", &format!("/p{i}"), "5.6.7.8");
+            checker.check(&ctx);
+        }
+        clock.advance(TEST_WINDOW_EXPIRED);
+        // After window passage, the buffer is fresh — one new path = 1 distinct.
+        let ctx = make_ctx_with_method_path("GET", "/p_new", "5.6.7.8");
+        assert!(checker.check(&ctx).is_none());
+    }
+
+    #[test]
+    fn endpoint_enum_dedups_by_path_ignoring_query() {
+        // /a?cb=1, /a?cb=2, /a?cb=3 should count as one distinct path.
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        for i in 0..50 {
+            let ctx = make_ctx_with_method_path("GET", &format!("/api/health?cb={i}"), "5.6.7.8");
+            assert!(checker.check(&ctx).is_none());
+        }
+    }
+
+    #[test]
+    fn options_threshold_triggers_detection() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        // Default threshold is 20.
+        for _ in 0..19 {
+            let ctx = make_ctx_with_method_path("OPTIONS", "/api/users", "5.6.7.8");
+            assert!(checker.check(&ctx).is_none());
+        }
+        let ctx = make_ctx_with_method_path("OPTIONS", "/api/users", "5.6.7.8");
+        let det = checker.check(&ctx).expect("hit at 20");
+        assert_eq!(det.rule_id.as_deref().unwrap_or(""), "SCAN-OPT-001");
+    }
+
+    #[test]
+    fn options_window_expires() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock.clone());
+        for _ in 0..19 {
+            let ctx = make_ctx_with_method_path("OPTIONS", "/api/users", "5.6.7.8");
+            checker.check(&ctx);
+        }
+        clock.advance(TEST_WINDOW_EXPIRED);
+        let ctx = make_ctx_with_method_path("OPTIONS", "/api/users", "5.6.7.8");
+        assert!(checker.check(&ctx).is_none());
+    }
+
+    #[test]
+    fn per_ip_isolation_does_not_leak() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        // IP A racks up 29 distinct paths.
+        for i in 0..29 {
+            let ctx = make_ctx_with_method_path("GET", &format!("/p{i}"), "1.1.1.1");
+            checker.check(&ctx);
+        }
+        // IP B starts cold — single request, no detection.
+        let ctx_b = make_ctx_with_method_path("GET", "/p0", "2.2.2.2");
+        assert!(checker.check(&ctx_b).is_none());
+    }
+
+    #[test]
+    fn ua_scanner_short_circuits_before_state_lookup() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        let mut ctx = make_ctx_with_method_path("OPTIONS", "/", "5.6.7.8");
+        ctx.headers.insert("user-agent".to_string(), "sqlmap/1.7".to_string());
+        let det = checker.check(&ctx).expect("hit");
+        // UA hit gives SCAN-001..SCAN-032, never the state-machine SCAN-OPT-001.
+        let id = det.rule_id.as_deref().unwrap_or("");
+        assert!(id.starts_with("SCAN-") && !id.contains("OPT") && !id.contains("ENUM"));
+    }
+
+    #[test]
+    fn skipped_when_scan_disabled_even_for_state_signals() {
+        let clock = Arc::new(MockClock::new());
+        let checker = ScannerCheck::with_clock(clock);
+        let mut ctx = make_ctx_with_method_path("OPTIONS", "/", "5.6.7.8");
+        // Disable scanner check entirely.
+        ctx.host_config = Arc::new(waf_common::HostConfig {
+            defense_config: DefenseConfig {
+                scan: false,
+                ..DefenseConfig::default()
+            },
+            ..waf_common::HostConfig::default()
+        });
+        for _ in 0..50 {
+            assert!(checker.check(&ctx).is_none());
         }
     }
 }

@@ -1,0 +1,39 @@
+# Single-stage Rust 1.91 image with cargo-llvm-cov pre-installed.
+#
+# Used by Phase 00..08 of the FR-014..FR-020 detection plan to produce
+# `lcov.info` + summary text inside a hermetic container, leaving the host's
+# `target/` directory untouched. Bind-mount the workspace at /workspace and
+# mount a named volume at /cov-target so subsequent runs reuse the cargo
+# build cache without polluting the developer's host repo.
+#
+# Example:
+#   docker build -f Dockerfile.coverage -t prx-waf:cov .
+#   docker run --rm \
+#     -v "$PWD":/workspace \
+#     -v prx-waf-cov-target:/cov-target \
+#     prx-waf:cov \
+#     cargo llvm-cov -p waf-engine --summary-only
+FROM rust:1.91-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+        cmake \
+        build-essential \
+        gawk \
+        bash \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add llvm-tools-preview
+
+# Pin cargo-llvm-cov to 0.8.5 — the version this plan was validated against.
+RUN cargo install --locked cargo-llvm-cov --version 0.8.5
+
+WORKDIR /workspace
+ENV CARGO_TARGET_DIR=/cov-target
+ENV CARGO_HOME=/usr/local/cargo
+
+CMD ["cargo", "llvm-cov", "--workspace", "--summary-only"]
