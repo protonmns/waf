@@ -547,8 +547,7 @@ impl ProxyHttp for WafProxy {
     where
         Self::CTX: Send + Sync,
     {
-        // Only trust Content-Encoding when filters ran with host context.
-        let upstream_identity_ce: bool = if let (Some(req_ctx), Some(hc)) = (&ctx.request_ctx, &ctx.host_config) {
+        if let (Some(req_ctx), Some(hc)) = (&ctx.request_ctx, &ctx.host_config) {
             let fctx = FilterCtx {
                 request_ctx: req_ctx,
                 host_config: hc,
@@ -578,17 +577,16 @@ impl ProxyHttp for WafProxy {
             } else if !compiled.is_noop() {
                 debug!("body-mask: skipping non-identity content-encoding");
             }
-            identity
-        } else {
-            false
-        };
+        }
 
+        // Cache capture reads `Content-Encoding` from the same header map Pingora will
+        // stream (after response_chain above when host config exists), so misses without
+        // host context still observe identity/absent CE correctly.
         if let Some(pending) = ctx.response_cache_store.as_mut()
             && !crate::response_cache_integration::begin_upstream_cache_capture(
                 pending,
                 upstream_response,
                 ctx.body_mask.enabled,
-                upstream_identity_ce,
             )
         {
             ctx.response_cache_store = None;
@@ -606,6 +604,8 @@ impl ProxyHttp for WafProxy {
     where
         Self::CTX: Send + Sync,
     {
+        // Body mask runs first: when enabled, `begin_upstream_cache_capture` already
+        // declined capture (`capture_started == false`), so the cache branch below is a no-op.
         if ctx.body_mask.enabled {
             let Some(hc) = &ctx.host_config else {
                 return Ok(None);

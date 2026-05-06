@@ -25,8 +25,20 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use serde_json::{Map, Value};
 
 use crate::state::AppState;
+
+/// Admin API hint when destructive SCAN-based ops may not cover the whole cluster.
+fn cluster_scan_purge_warning(info: &gateway::BackendInfo) -> Option<&'static str> {
+    if info.backend == "cluster" {
+        Some(
+            "cluster mode: SCAN-based flush and purge_host are best-effort and node-local; keys on other shards may remain",
+        )
+    } else {
+        None
+    }
+}
 
 /// Max length for a tag or `route_id` received over the admin API.
 const MAX_TAG_LEN: usize = 64;
@@ -178,14 +190,28 @@ pub async fn cache_purge_route(
 
 /// DELETE /api/cache — flush the entire cache.
 pub async fn cache_flush(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let info = state.cache.backend_info().await;
+    let warn = cluster_scan_purge_warning(&info);
     state.cache.flush().await;
-    (StatusCode::OK, Json(json!({ "flushed": true }))).into_response()
+    let mut body = Map::new();
+    body.insert("flushed".to_string(), json!(true));
+    if let Some(w) = warn {
+        body.insert("warning".to_string(), json!(w));
+    }
+    (StatusCode::OK, Json(Value::Object(body))).into_response()
 }
 
 /// DELETE /api/cache/host/:host — flush all entries for a given host.
 pub async fn cache_flush_host(State(state): State<Arc<AppState>>, Path(host): Path<String>) -> impl IntoResponse {
+    let info = state.cache.backend_info().await;
+    let warn = cluster_scan_purge_warning(&info);
     state.cache.purge_host(&host).await;
-    (StatusCode::OK, Json(json!({ "flushed_host": host }))).into_response()
+    let mut body = Map::new();
+    body.insert("flushed_host".to_string(), json!(host.clone()));
+    if let Some(w) = warn {
+        body.insert("warning".to_string(), json!(w));
+    }
+    (StatusCode::OK, Json(Value::Object(body))).into_response()
 }
 
 /// DELETE /api/cache/key — flush a specific cache key (`?key=<encoded-key>`).
@@ -328,6 +354,38 @@ mod tests {
     fn validate_tag_rejects_semicolon() {
         assert!(matches!(
             validate_tag("catalog;drop"),
+            Err("only ASCII alnum and `_`, `-`, `:` allowed")
+        ));
+    }
+
+    #[test]
+    fn validate_tag_rejects_internal_space() {
+        assert!(matches!(
+            validate_tag("foo bar"),
+            Err("only ASCII alnum and `_`, `-`, `:` allowed")
+        ));
+    }
+
+    #[test]
+    fn validate_tag_rejects_newline_embedded() {
+        assert!(matches!(
+            validate_tag("foo\nbar"),
+            Err("only ASCII alnum and `_`, `-`, `:` allowed")
+        ));
+    }
+
+    #[test]
+    fn validate_tag_rejects_tab_embedded() {
+        assert!(matches!(
+            validate_tag("foo\tbar"),
+            Err("only ASCII alnum and `_`, `-`, `:` allowed")
+        ));
+    }
+
+    #[test]
+    fn validate_tag_rejects_slash() {
+        assert!(matches!(
+            validate_tag("a/b"),
             Err("only ASCII alnum and `_`, `-`, `:` allowed")
         ));
     }

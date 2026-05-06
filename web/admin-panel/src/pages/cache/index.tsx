@@ -78,6 +78,32 @@ function circuitColor(cb?: string): string {
   return "default";
 }
 
+/** Normalize Refine `useCustom` payloads across data-provider / version differences. */
+function refineCustomData<T>(h: {
+  data?: T;
+  result?: { data?: T };
+}): T | undefined {
+  return h.data ?? h.result?.data;
+}
+
+function refineCustomRefetch(h: {
+  query?: { refetch?: () => unknown };
+  refetch?: () => void;
+}): void {
+  void h.query?.refetch?.();
+  void h.refetch?.();
+}
+
+function refineCustomLoading(h: {
+  isLoading?: boolean;
+  query?: { isLoading?: boolean; isFetching?: boolean };
+}): { isLoading: boolean; isFetching: boolean } {
+  return {
+    isLoading: h.isLoading ?? h.query?.isLoading ?? false,
+    isFetching: h.query?.isFetching ?? false,
+  };
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export const CacheDashboardPage: React.FC = () => {
@@ -115,12 +141,13 @@ export const CacheDashboardPage: React.FC = () => {
     queryOptions: { staleTime: 29_000, refetchInterval: 30_000 },
   });
 
-  const stats = statsQ.result?.data;
-  const backend = backendQ.result?.data;
-  const rawTs = tsQ.result?.data;
+  const stats = refineCustomData(statsQ);
+  const backend = refineCustomData(backendQ);
+  const rawTs = refineCustomData(tsQ);
+  const routesRaw = refineCustomData(routesQ);
   // Defensive: useCustom can return an envelope object instead of a plain array
   // if the data-provider wrapping changes; Array.isArray guards against that.
-  const routes = Array.isArray(routesQ.result?.data) ? routesQ.result!.data : [];
+  const routes = Array.isArray(routesRaw) ? routesRaw : [];
 
   // Flatten timeseries into long-form for @ant-design/plots Line.
   // `Number(...) || 0` matches TrafficChart's pattern — guards against null/NaN
@@ -144,13 +171,13 @@ export const CacheDashboardPage: React.FC = () => {
   /** In-process Moka has no Valkey `INFO`; show tag-index depth instead of ops/sec. */
   const fourthKpiIsTagIndex = stats?.backend === "memory";
 
-  const isLoading = statsQ.query.isLoading;
+  const { isLoading, isFetching } = refineCustomLoading(statsQ);
 
   function refetchAll() {
-    statsQ.query.refetch();
-    backendQ.query.refetch();
-    tsQ.query.refetch();
-    routesQ.query.refetch();
+    refineCustomRefetch(statsQ);
+    refineCustomRefetch(backendQ);
+    refineCustomRefetch(tsQ);
+    refineCustomRefetch(routesQ);
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -163,7 +190,7 @@ export const CacheDashboardPage: React.FC = () => {
       const r = await httpClient.post("/api/cache/purge/tag", { tag });
       message.success(t("cache.purged", { n: r.data?.purged ?? 0 }));
       setPurgeTagVal("");
-      statsQ.query.refetch();
+      refineCustomRefetch(statsQ);
     } catch {
       message.error(t("cache.purgeError"));
     } finally {
@@ -176,8 +203,8 @@ export const CacheDashboardPage: React.FC = () => {
     try {
       const r = await httpClient.post("/api/cache/purge/route", { route_id: routeId });
       message.success(t("cache.purged", { n: r.data?.purged ?? 0 }));
-      statsQ.query.refetch();
-      routesQ.query.refetch();
+      refineCustomRefetch(statsQ);
+      refineCustomRefetch(routesQ);
     } catch {
       message.error(t("cache.purgeError"));
     } finally {
@@ -258,7 +285,7 @@ export const CacheDashboardPage: React.FC = () => {
           <Text type="secondary" style={{ fontSize: 12 }}>{t("cache.subtitle")}</Text>
         </div>
         <Button
-          icon={<ReloadOutlined spin={statsQ.query.isFetching} />}
+          icon={<ReloadOutlined spin={isFetching} />}
           onClick={refetchAll}
           loading={isLoading}
           type="primary"

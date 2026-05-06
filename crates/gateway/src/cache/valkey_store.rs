@@ -49,6 +49,8 @@ pub struct ValkeyStore {
     client: Arc<RedisClient>,
     command_timeout: Duration,
     max_size_mb: u64,
+    /// `true` when built with multiple seeds (fred cluster client). SCAN-based ops are node-local.
+    cluster_mode: bool,
 }
 
 impl ValkeyStore {
@@ -56,15 +58,9 @@ impl ValkeyStore {
     pub async fn connect(cfg: &ValkeyClientConfig, max_size_mb: u64) -> anyhow::Result<Self> {
         use fred::types::{RedisConfig, ServerConfig};
 
-        let server = if cfg.seeds.len() <= 1 {
-            let seed = cfg.seeds.first().map_or("127.0.0.1:6379", String::as_str);
-            if let Some(path) = seed.strip_prefix("unix:") {
-                ServerConfig::new_unix_socket(path)
-            } else {
-                let (host, port) = parse_host_port(seed)?;
-                ServerConfig::new_centralized(host, port)
-            }
-        } else {
+        let cluster_mode = cfg.seeds.len() > 1;
+
+        let server = if cluster_mode {
             // Cluster mode: provide all seeds; fred discovers the rest.
             let nodes: Vec<(String, u16)> = cfg
                 .seeds
@@ -72,6 +68,14 @@ impl ValkeyStore {
                 .map(|s| parse_host_port(s))
                 .collect::<anyhow::Result<_>>()?;
             ServerConfig::new_clustered(nodes)
+        } else {
+            let seed = cfg.seeds.first().map_or("127.0.0.1:6379", String::as_str);
+            if let Some(path) = seed.strip_prefix("unix:") {
+                ServerConfig::new_unix_socket(path)
+            } else {
+                let (host, port) = parse_host_port(seed)?;
+                ServerConfig::new_centralized(host, port)
+            }
         };
 
         let redis_cfg = RedisConfig {
@@ -121,6 +125,7 @@ impl ValkeyStore {
             client,
             command_timeout: Duration::from_millis(cfg.command_timeout_ms),
             max_size_mb,
+            cluster_mode,
         })
     }
 
@@ -361,7 +366,11 @@ impl CacheBackend for ValkeyStore {
         let memory_max_bytes = memory_max.or_else(|| Some(self.max_size_mb * 1024 * 1024));
 
         BackendInfo {
-            backend: "valkey".to_string(),
+            backend: if self.cluster_mode {
+                "cluster".to_string()
+            } else {
+                "standalone".to_string()
+            },
             valkey_version: version,
             connected: health.ok,
             nodes: vec![],

@@ -16,7 +16,7 @@
 //!
 //! ```text
 //! valkey-server
-//!   --unixsocket  /tmp/prx-valkey-{pid}.sock
+//!   --unixsocket  /tmp/prx-valkey-{pid}-{nanos}.sock
 //!   --unixsocketperm 700
 //!   --bind 127.0.0.1
 //!   --port 0               # disable TCP; UNIX socket only
@@ -55,9 +55,13 @@ impl EmbeddedValkey {
         let binary = find_binary(&cfg.binary_path)?;
         info!(binary = %binary.display(), "spawning embedded Valkey");
 
-        // UNIX socket path includes the PID to avoid collisions.
+        // UNIX socket path: PID + monotonic-ish nanos so a quick restart after crash
+        // does not collide with a stale file from a reused PID.
         let pid = std::process::id();
-        let socket_path = PathBuf::from(format!("/tmp/prx-valkey-{pid}.sock"));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0u128, |d| d.as_nanos());
+        let socket_path = PathBuf::from(format!("/tmp/prx-valkey-{pid}-{nanos}.sock"));
 
         // Ensure data dir exists.
         if !cfg.data_dir.is_empty() {
@@ -113,7 +117,7 @@ impl EmbeddedValkey {
     }
 
     /// Returns the connect address suitable for the Valkey client:
-    /// `"unix:/tmp/prx-valkey-{pid}.sock"`.
+    /// `"unix:/tmp/prx-valkey-{pid}-{nanos}.sock"`.
     pub fn unix_socket_addr(&self) -> String {
         format!("unix:{}", self.socket_path.display())
     }

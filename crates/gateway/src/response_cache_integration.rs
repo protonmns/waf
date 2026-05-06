@@ -34,14 +34,26 @@ fn collect_response_headers(resp: &pingora_http::ResponseHeader) -> Vec<(String,
     out
 }
 
+/// `Content-Encoding` is cacheable when absent, empty, or `identity` (no gzip/br/etc.).
+///
+/// Uses the **current** response headers (after `response_chain` runs when host context exists).
+fn response_content_encoding_allows_cache(resp: &pingora_http::ResponseHeader) -> bool {
+    resp.headers
+        .get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .is_none_or(|v| {
+            let v = v.trim();
+            v.is_empty() || v.eq_ignore_ascii_case("identity")
+        })
+}
+
 /// Returns `false` when the upstream response must not be cached.
 pub fn begin_upstream_cache_capture(
     pending: &mut ResponseCachePending,
     upstream_response: &pingora_http::ResponseHeader,
     body_mask_enabled: bool,
-    upstream_identity_encoding: bool,
 ) -> bool {
-    if body_mask_enabled || !upstream_identity_encoding {
+    if body_mask_enabled || !response_content_encoding_allows_cache(upstream_response) {
         return false;
     }
     let status = upstream_response.status.as_u16();

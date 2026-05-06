@@ -299,10 +299,11 @@ impl ResponseCache {
         let now = Instant::now();
         {
             let guard = self.stats_backend_info_cache.lock();
-            if let Some((info, at)) = guard.as_ref()
-                && now.duration_since(*at) < STATS_BACKEND_INFO_TTL
-            {
-                return info.clone();
+            #[allow(clippy::collapsible_if)] // nested form avoids depending on `let_chains`
+            if let Some((info, at)) = guard.as_ref() {
+                if now.duration_since(*at) < STATS_BACKEND_INFO_TTL {
+                    return info.clone();
+                }
             }
         }
         let info = self.backend.backend_info().await;

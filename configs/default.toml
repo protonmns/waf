@@ -31,6 +31,8 @@ rules_path = "rules/cache.yaml"
 # Cache backend. Docker Compose default stack uses standalone Valkey (service
 # "valkey"); for local dev without Compose, set "memory" or "embedded".
 backend = "standalone"
+# If Valkey is not reachable at boot (e.g. Compose still starting), either wait for
+# `depends_on: service_healthy` or temporarily set backend = "memory".
 
 # ── Embedded Valkey (backend = "embedded") ────────────────────────────────────
 # Spawns a valkey-server child process using a UNIX socket.
