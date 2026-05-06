@@ -322,23 +322,27 @@ pub fn xdb_file_info(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::duration_suboptimal_units)] // expect values spelled as `from_secs` for MSRV parity
+    //! Expected [`Duration`]s use `from_secs` with the same multipliers as
+    //! [`parse_duration`] (`n * 86_400`, `n * 3_600`, …), not `from_hours` /
+    //! `from_mins`, so tests stay aligned with production and older stable
+    //! toolchains.
+    #![allow(clippy::duration_suboptimal_units)]
 
     use super::*;
 
     #[test]
     fn parse_duration_days() {
-        assert_eq!(parse_duration("7d"), Duration::from_secs(604_800));
+        assert_eq!(parse_duration("7d"), Duration::from_secs(7 * 86_400));
     }
 
     #[test]
     fn parse_duration_hours() {
-        assert_eq!(parse_duration("12h"), Duration::from_secs(43_200));
+        assert_eq!(parse_duration("12h"), Duration::from_secs(12 * 3_600));
     }
 
     #[test]
     fn parse_duration_minutes() {
-        assert_eq!(parse_duration("30m"), Duration::from_secs(1_800));
+        assert_eq!(parse_duration("30m"), Duration::from_secs(30 * 60));
     }
 
     #[test]
@@ -349,7 +353,7 @@ mod tests {
     #[test]
     fn parse_duration_fallback() {
         // Unrecognised unit falls back to 7 days.
-        assert_eq!(parse_duration("3x"), Duration::from_secs(604_800));
+        assert_eq!(parse_duration("3x"), Duration::from_secs(7 * 86_400));
     }
 
     #[test]
@@ -361,7 +365,7 @@ mod tests {
     #[test]
     fn parse_duration_unparseable_number_falls_back_to_seven_days() {
         // No leading digits → unit becomes "zh" (unrecognised) → 7-day default.
-        assert_eq!(parse_duration("zh"), Duration::from_secs(604_800));
+        assert_eq!(parse_duration("zh"), Duration::from_secs(7 * 86_400));
     }
 
     #[test]
