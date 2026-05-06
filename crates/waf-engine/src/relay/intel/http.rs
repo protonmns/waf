@@ -4,13 +4,15 @@
 //! and a stable User-Agent. Body streaming is enabled (workspace feature
 //! `stream`); `gzip` is enabled for `.gz` TSV feeds.
 
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`
+
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use reqwest::Client;
 
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_mins(1);
+const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 const USER_AGENT: &str = concat!("mini-waf/", env!("CARGO_PKG_VERSION"), " relay-intel");
 

@@ -5,6 +5,8 @@
 //! - IP-based admin access control
 //! - Simple in-process per-IP rate limiting
 
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`
+
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -61,7 +63,7 @@ pub async fn security_headers_middleware(req: Request<Body>, next: Next) -> impl
 const API_RATE_MAX_ENTRIES: usize = 50_000;
 
 /// Entries idle longer than this are evicted during periodic cleanup.
-const API_RATE_TTL: std::time::Duration = std::time::Duration::from_mins(10);
+const API_RATE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Token-bucket entry per IP
 struct Bucket {
@@ -90,7 +92,7 @@ impl ApiRateLimiter {
         // Spawn background cleanup task (runs every 60 seconds)
         let limiter_bg = Arc::clone(&limiter);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
                 limiter_bg.cleanup();

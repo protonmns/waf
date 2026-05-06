@@ -1334,7 +1334,8 @@ fn run_server(config: &AppConfig, config_file_path: &str) -> anyhow::Result<()> 
     let cache_for_timeseries = Arc::clone(&api_state.cache);
     rt.spawn(async move {
         use tokio::time::MissedTickBehavior;
-        let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
+        #[allow(clippy::duration_suboptimal_units)] // `from_secs(60)` — stable MSRV parity
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             interval.tick().await;

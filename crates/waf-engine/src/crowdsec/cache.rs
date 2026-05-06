@@ -1,3 +1,5 @@
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`/`from_hours`
+
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -183,7 +185,7 @@ impl DecisionCache {
             return Instant::now() + Duration::from_secs(secs);
         }
         // Default fallback: 4 hours
-        Instant::now() + Duration::from_hours(4)
+        Instant::now() + Duration::from_secs(14_400)
     }
 
     fn insert_decision(&self, decision: &Decision, cached: CachedDecision) {
@@ -288,11 +290,11 @@ mod tests {
     fn cached_decision_is_expired_reflects_instant() {
         let past = CachedDecision {
             decision: decision("Ip", "1.2.3.4", "test"),
-            expires_at: Instant::now().checked_sub(Duration::from_mins(1)).expect("clock"),
+            expires_at: Instant::now().checked_sub(Duration::from_secs(60)).expect("clock"),
         };
         let future = CachedDecision {
             decision: decision("Ip", "1.2.3.4", "test"),
-            expires_at: Instant::now() + Duration::from_mins(1),
+            expires_at: Instant::now() + Duration::from_secs(60),
         };
         assert!(past.is_expired());
         assert!(!future.is_expired());

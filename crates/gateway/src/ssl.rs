@@ -13,6 +13,8 @@
 //! The gateway proxy serves challenge tokens at:
 //! `GET /.well-known/acme-challenge/{token}`
 
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`/`from_hours`
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -182,7 +184,7 @@ impl SslManager {
         }
 
         // Wait for order to become ready (poll up to 60s)
-        let deadline = tokio::time::Instant::now() + Duration::from_mins(1);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let state = order.refresh().await?;
@@ -283,7 +285,7 @@ impl SslManager {
     /// Checks for certificates due renewal every 24 hours.
     pub fn spawn_renewal_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let interval = Duration::from_hours(24);
+            let interval = Duration::from_secs(86_400);
             loop {
                 tokio::time::sleep(interval).await;
                 if let Err(e) = Arc::clone(&self).renew_due_certificates().await {
