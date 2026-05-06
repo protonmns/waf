@@ -9,7 +9,17 @@ listen_addr = "0.0.0.0:9527"
 database_url = "postgresql://prx_waf:prx_waf@postgres:5432/prx_waf"
 max_connections = 20
 
-# ── Phase 5: Response Caching ─────────────────────────────────────────────────
+# ── FR-009: Response Caching ──────────────────────────────────────────────────
+#
+# backend choices:
+#   "memory"     — in-process Moka LRU (default, no extra process)
+#   "embedded"   — spawn valkey-server as a child process via UNIX socket
+#   "standalone" — connect to an external Valkey/Redis instance
+#   "cluster"    — connect to a Valkey cluster (topology auto-discovered)
+#
+# For "embedded" / "standalone" / "cluster" the binary must be built with
+# the `valkey` feature flag:  cargo build --features gateway/valkey
+#
 [cache]
 enabled = true
 max_size_mb = 256
@@ -18,6 +28,45 @@ max_ttl_secs = 3600
 # FR-009 Phase 3: per-route TTL rules. Hot-reloaded on file change.
 # Missing file is non-fatal at boot (logs warn, runs with no per-route rules).
 rules_path = "rules/cache.yaml"
+# Cache backend (default: memory).  Uncomment one of the sections below.
+backend = "memory"
+
+# ── Embedded Valkey (backend = "embedded") ────────────────────────────────────
+# Spawns a valkey-server child process using a UNIX socket.
+# No separate container or service is needed.
+#
+# [cache.embedded]
+# binary_path = ""              # auto-detect from $PATH or /usr/local/bin/valkey-server
+# data_dir    = "/tmp/prx-valkey"
+# extra_args  = []              # additional valkey-server flags
+
+# ── Standalone Valkey (backend = "standalone") ────────────────────────────────
+#
+# [cache.valkey]
+# seeds                    = ["127.0.0.1:6379"]
+# password                 = ""
+# db                       = 0
+# tls                      = false
+# pool_size                = 4
+# connect_timeout_ms       = 2000
+# command_timeout_ms       = 500
+# circuit_breaker_threshold  = 5   # consecutive failures before opening
+# circuit_breaker_reset_secs = 30  # seconds before trying half-open
+# fallback_to_memory       = true  # degrade to in-process cache on failure
+
+# ── Valkey Cluster (backend = "cluster") ─────────────────────────────────────
+#
+# [cache.valkey]
+# seeds                    = ["10.0.1.1:6379", "10.0.1.2:6379", "10.0.1.3:6379"]
+# password                 = ""
+# tls                      = true
+# tls_ca_cert              = "/etc/prx-waf/tls/valkey-ca.pem"
+# pool_size                = 4
+# connect_timeout_ms       = 2000
+# command_timeout_ms       = 500
+# circuit_breaker_threshold  = 5
+# circuit_breaker_reset_secs = 30
+# fallback_to_memory       = true
 
 # ── Phase 5: HTTP/3 (QUIC) ────────────────────────────────────────────────────
 [http3]

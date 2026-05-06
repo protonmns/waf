@@ -29,6 +29,8 @@
         <NavItem to="/rules-management" :icon="BookOpen">{{ $t('nav.ruleManager') }}</NavItem>
         <NavItem to="/rule-sources" :icon="GitBranch">{{ $t('nav.ruleSources') }}</NavItem>
         <NavItem to="/bot-management" :icon="BotIcon">{{ $t('nav.botDetection') }}</NavItem>
+        <div class="pt-2 pb-1 px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">{{ $t('nav.cache') }}</div>
+        <NavItem to="/cache" :icon="DatabaseZap">{{ $t('nav.cacheDashboard') }}</NavItem>
       </nav>
       <div class="px-4 py-3 border-t border-gray-700 space-y-2">
         <!-- Language switcher -->
@@ -96,6 +98,7 @@ import {
   Network,
   Key,
   RefreshCw,
+  DatabaseZap,
 } from 'lucide-vue-next'
 
 const auth = useAuthStore()

@@ -126,3 +126,17 @@ export const clusterApi = {
   generateToken: (ttl_ms?: number) => api.post('/api/cluster/token', { ttl_ms }),
   removeNode: (node_id: string) => api.post('/api/cluster/nodes/remove', { node_id }),
 }
+
+// ─── Cache (FR-009 Valkey dashboard) ──────────────────────────────────────────
+export const cacheApi = {
+  stats: () => api.get('/api/cache/stats'),
+  backend: () => api.get('/api/cache/backend'),
+  timeseries: (minutes = 60) => api.get('/api/cache/stats/timeseries', { params: { minutes } }),
+  topRoutes: (limit = 20) => api.get('/api/cache/routes/top', { params: { limit } }),
+  tags: () => api.get('/api/cache/tags'),
+  purgeTag: (tag: string) => api.post('/api/cache/purge/tag', { tag }),
+  purgeRoute: (route_id: string) => api.post('/api/cache/purge/route', { route_id }),
+  flush: () => api.delete('/api/cache'),
+  flushHost: (host: string) => api.delete(`/api/cache/host/${host}`),
+  flushKey: (key: string) => api.delete('/api/cache/key', { data: { key } }),
+}

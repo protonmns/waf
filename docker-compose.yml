@@ -31,6 +31,10 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-with-a-long-random-secret}
       DATABASE_URL: postgresql://prx_waf:prx_waf@postgres:5432/prx_waf
+      # Cache backend selection: memory | embedded | standalone | cluster
+      # Set to "embedded" to run valkey-server as a child process alongside the WAF.
+      # The valkey-server binary is included in the Docker image; no separate service needed.
+      CACHE_BACKEND: ${CACHE_BACKEND:-embedded}
     volumes:
       - ./configs:/app/configs      # rw: waf-panel.toml is written by the admin API
       - ./rules:/app/rules:ro

@@ -22,6 +22,8 @@ const routes = [
   { path: '/rules-management', component: () => import('../views/RulesManagement.vue') },
   { path: '/rule-sources', component: () => import('../views/RuleSources.vue') },
   { path: '/bot-management', component: () => import('../views/BotManagement.vue') },
+  // FR-009: Cache dashboard
+  { path: '/cache', component: () => import('../views/CacheDashboard.vue') },
   // Phase 8: Cluster
   { path: '/cluster', component: () => import('../views/ClusterOverview.vue') },
   { path: '/cluster/nodes/:id', component: () => import('../views/ClusterNodeDetail.vue') },

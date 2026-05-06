@@ -16,7 +16,7 @@ pub mod ssl;
 pub mod tiered;
 pub mod tunnel;
 
-pub use cache::{CacheStatsSnapshot, ResponseCache};
+pub use cache::{BackendHealth, BackendInfo, CacheStatsSnapshot, CachedResponse, ResponseCache, TimeseriesBucket};
 pub use ctx_builder::RequestCtxBuilder;
 pub use http3::alt_svc_header;
 pub use lb::{Backend, LoadBalancer, LoadBalancerRegistry};
