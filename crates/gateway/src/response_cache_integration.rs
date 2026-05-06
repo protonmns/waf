@@ -49,6 +49,10 @@ pub fn begin_upstream_cache_capture(
         return false;
     }
     if upstream_response.headers.contains_key("vary") {
+        tracing::debug!(
+            cache_key = %pending.key,
+            "response cache: skipping capture due to Vary header"
+        );
         return false;
     }
     pending.status = status;

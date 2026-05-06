@@ -5,6 +5,7 @@ import {
 import {
   ReloadOutlined, ThunderboltOutlined, DatabaseOutlined,
   HddOutlined, PercentageOutlined, DeleteOutlined, ClearOutlined,
+  TagsOutlined,
 } from "@ant-design/icons";
 import { useCustom, useApiUrl } from "@refinedev/core";
 import { useTranslation } from "react-i18next";
@@ -27,6 +28,7 @@ interface CacheStats {
   memory_used_bytes?: number;
   backend?: string;
   valkey_ops_per_sec?: number;
+  tag_index_size?: number;
 }
 
 interface BackendInfo {
@@ -138,6 +140,9 @@ export const CacheDashboardPage: React.FC = () => {
     if (!backend?.memory_used_bytes || !backend?.memory_max_bytes) return null;
     return Math.min(100, (backend.memory_used_bytes / backend.memory_max_bytes) * 100);
   }, [backend]);
+
+  /** In-process Moka has no Valkey `INFO`; show tag-index depth instead of ops/sec. */
+  const fourthKpiIsTagIndex = stats?.backend === "memory";
 
   const isLoading = statsQ.query.isLoading;
 
@@ -298,10 +303,14 @@ export const CacheDashboardPage: React.FC = () => {
         <Col xs={12} sm={6}>
           <Card>
             <Statistic
-              title={t("cache.opsPerSec")}
-              value={stats?.valkey_ops_per_sec != null ? fmtNum(stats.valkey_ops_per_sec) : "—"}
-              prefix={<ThunderboltOutlined />}
-              valueStyle={{ color: "#fa8c16" }}
+              title={fourthKpiIsTagIndex ? t("cache.tagIndex") : t("cache.opsPerSec")}
+              value={
+                fourthKpiIsTagIndex
+                  ? (stats?.tag_index_size != null ? fmtNum(stats.tag_index_size) : "—")
+                  : (stats?.valkey_ops_per_sec != null ? fmtNum(stats.valkey_ops_per_sec) : "—")
+              }
+              prefix={fourthKpiIsTagIndex ? <TagsOutlined /> : <ThunderboltOutlined />}
+              valueStyle={{ color: fourthKpiIsTagIndex ? "#13c2c2" : "#fa8c16" }}
             />
           </Card>
         </Col>

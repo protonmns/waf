@@ -547,8 +547,8 @@ impl ProxyHttp for WafProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let mut upstream_identity_ce = true;
-        if let (Some(req_ctx), Some(hc)) = (&ctx.request_ctx, &ctx.host_config) {
+        // Only trust Content-Encoding when filters ran with host context.
+        let upstream_identity_ce: bool = if let (Some(req_ctx), Some(hc)) = (&ctx.request_ctx, &ctx.host_config) {
             let fctx = FilterCtx {
                 request_ctx: req_ctx,
                 host_config: hc,
@@ -560,7 +560,7 @@ impl ProxyHttp for WafProxy {
             // AC-17: decide whether body masking will run for this response.
             // Identity (or absent) Content-Encoding only — compressed bodies
             // are out of scope for FR-001 (FR-033 will add decompression).
-            upstream_identity_ce = upstream_response
+            let identity = upstream_response
                 .headers
                 .get("content-encoding")
                 .and_then(|v| v.to_str().ok())
@@ -569,7 +569,7 @@ impl ProxyHttp for WafProxy {
                     v.is_empty() || v.eq_ignore_ascii_case("identity")
                 });
             let compiled = self.resolve_mask(hc);
-            if upstream_identity_ce && !compiled.is_noop() {
+            if identity && !compiled.is_noop() {
                 ctx.body_mask.enabled = true;
                 // Replacement length differs from match length — body length is
                 // no longer fixed. Drop Content-Length so Pingora switches to
@@ -578,7 +578,10 @@ impl ProxyHttp for WafProxy {
             } else if !compiled.is_noop() {
                 debug!("body-mask: skipping non-identity content-encoding");
             }
-        }
+            identity
+        } else {
+            false
+        };
 
         if let Some(pending) = ctx.response_cache_store.as_mut()
             && !crate::response_cache_integration::begin_upstream_cache_capture(

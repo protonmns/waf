@@ -89,7 +89,7 @@ pub async fn cache_stats(State(state): State<Arc<AppState>>) -> impl IntoRespons
     let count = state.cache.entry_count();
     let tag_index = state.cache.tag_index_size();
     let hit_ratio = snap.hit_ratio();
-    let backend_info = state.cache.backend_info().await;
+    let backend_info = state.cache.backend_info_for_stats_panel().await;
 
     (
         StatusCode::OK,
@@ -228,7 +228,7 @@ pub async fn cache_stats_timeseries(
     let payload: Vec<serde_json::Value> = buckets
         .into_iter()
         .map(|b| {
-            let ts = chrono::DateTime::from_timestamp(b.ts.cast_signed(), 0)
+            let ts = chrono::DateTime::from_timestamp(i64::try_from(b.ts).unwrap_or(0), 0)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_default();
             json!({
@@ -257,17 +257,19 @@ pub async fn cache_top_routes(
 
 /// GET /api/cache/tags — list all tags with entry counts.
 pub async fn cache_list_tags(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // For the memory backend, tag names and counts come from the local tag_index.
-    // The moka store's tag_index doesn't expose per-tag counts yet, so we return
-    // a lightweight summary with the total tag_index_size as a proxy.
-    //
-    // For Valkey backends this is the server-side SCAN of prx:tag:* keys (future).
-    let tag_index_size = state.cache.tag_index_size();
-    let payload = json!({
-        "total_tags": tag_index_size,
-        "tags": [],  // Per-tag counts require a backend-level SCAN; stub for now.
-    });
-    (StatusCode::OK, Json(payload)).into_response()
+    let tags_data: Vec<serde_json::Value> = state
+        .cache
+        .tag_entry_counts()
+        .await
+        .into_iter()
+        .map(|(tag, entry_count)| json!({ "tag": tag, "entry_count": entry_count }))
+        .collect();
+    let total_tags = tags_data.len();
+    (
+        StatusCode::OK,
+        Json(json!({ "total_tags": total_tags, "tags": tags_data })),
+    )
+        .into_response()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

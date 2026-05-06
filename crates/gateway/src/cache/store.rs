@@ -21,9 +21,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use parking_lot::Mutex;
 use tracing::{debug, trace};
 use waf_common::tier::{CachePolicy, Tier};
 
@@ -43,6 +44,9 @@ fn parse_cache_key(key: &str) -> Option<(&str, &str, &str)> {
     Some((method, host, path))
 }
 
+/// Cache [`BackendInfo`] for the stats dashboard poll interval (avoids Valkey `INFO` on every request).
+const STATS_BACKEND_INFO_TTL: Duration = Duration::from_secs(10);
+
 /// Shared response cache.
 ///
 /// Holds the resolver pipeline and bypass counters. All storage operations
@@ -54,6 +58,7 @@ pub struct ResponseCache {
     default_ttl: Duration,
     max_ttl: Duration,
     resolver: CachePolicyResolver,
+    stats_backend_info_cache: Mutex<Option<(BackendInfo, Instant)>>,
 }
 
 impl ResponseCache {
@@ -110,6 +115,7 @@ impl ResponseCache {
             default_ttl: Duration::from_secs(default_ttl_secs),
             max_ttl: Duration::from_secs(max_ttl_secs),
             resolver,
+            stats_backend_info_cache: Mutex::new(None),
         })
     }
 
@@ -286,6 +292,27 @@ impl ResponseCache {
     /// Return backend info for the `/api/cache/backend` endpoint.
     pub async fn backend_info(&self) -> BackendInfo {
         self.backend.backend_info().await
+    }
+
+    /// Freshness-trades-off copy of [`Self::backend_info`] for endpoints polled frequently (e.g. stats KPIs).
+    pub async fn backend_info_for_stats_panel(&self) -> BackendInfo {
+        let now = Instant::now();
+        {
+            let guard = self.stats_backend_info_cache.lock();
+            if let Some((info, at)) = guard.as_ref()
+                && now.duration_since(*at) < STATS_BACKEND_INFO_TTL
+            {
+                return info.clone();
+            }
+        }
+        let info = self.backend.backend_info().await;
+        *self.stats_backend_info_cache.lock() = Some((info.clone(), now));
+        info
+    }
+
+    /// Per-tag entry counts from the active storage backend (memory tag index or Valkey `SCAN`).
+    pub async fn tag_entry_counts(&self) -> Vec<(String, u64)> {
+        self.backend.tag_entry_counts().await
     }
 
     /// Return top cached routes by hits. `limit` caps the result count.

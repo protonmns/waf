@@ -167,8 +167,8 @@ fn which_binary(name: &str) -> anyhow::Result<PathBuf> {
 
 // ── Readiness polling ─────────────────────────────────────────────────────────
 
-/// Poll the UNIX socket until it appears and accepts a TCP-like probe.
-/// Uses a simple file-existence check + a brief connect attempt.
+/// Poll the UNIX socket until it accepts a connection (no separate `exists()`
+/// check — avoids TOCTOU between stat and connect).
 async fn wait_ready(socket_path: &PathBuf, timeout: Duration) -> anyhow::Result<()> {
     use tokio::net::UnixStream;
     use tokio::time::sleep;
@@ -177,11 +177,8 @@ async fn wait_ready(socket_path: &PathBuf, timeout: Duration) -> anyhow::Result<
     let poll_interval = Duration::from_millis(100);
 
     loop {
-        if socket_path.exists() {
-            // Try to open the socket.
-            if UnixStream::connect(socket_path).await.is_ok() {
-                return Ok(());
-            }
+        if UnixStream::connect(socket_path).await.is_ok() {
+            return Ok(());
         }
 
         if tokio::time::Instant::now() >= deadline {

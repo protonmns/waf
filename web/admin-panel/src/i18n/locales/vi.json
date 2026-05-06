@@ -468,6 +468,8 @@
     "subtitle": "Chỉ số hiệu suất cache thời gian thực",
     "hitRatio": "Tỷ lệ hit",
     "entries": "Số bản ghi",
+    "opsPerSec": "Ops/giây",
+    "tagIndex": "Chỉ mục tag (số khóa)",
     "memoryUsed": "Bộ nhớ dùng",
     "backend": "Backend",
     "mode": "Chế độ",

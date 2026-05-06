@@ -128,13 +128,7 @@ services:
       valkey-3:
         condition: service_healthy
     command: >
-      sh -c "sleep 2 &&
-        valkey-cli --cluster create
-          valkey-1:6379
-          valkey-2:6379
-          valkey-3:6379
-          --cluster-replicas 0
-          --cluster-yes"
+      sh -c "until valkey-cli --cluster create valkey-1:6379 valkey-2:6379 valkey-3:6379 --cluster-replicas 0 --cluster-yes; do echo 'cluster init retry...'; sleep 1; done"
     restart: "no"
     networks:
       - valkey_net

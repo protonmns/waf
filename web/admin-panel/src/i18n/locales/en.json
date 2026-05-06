@@ -468,6 +468,8 @@
     "subtitle": "Real-time cache performance metrics",
     "hitRatio": "Hit Ratio",
     "entries": "Entries",
+    "opsPerSec": "Ops / sec",
+    "tagIndex": "Tag index (keys)",
     "memoryUsed": "Memory Used",
     "backend": "Backend",
     "mode": "Mode",

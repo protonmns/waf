@@ -58,6 +58,10 @@ impl CacheBackend for MokaStore {
     }
 
     async fn put(&self, key: &str, value: CachedResponse, ttl_secs: u64, tags: &[Arc<str>]) -> bool {
+        debug_assert_eq!(
+            ttl_secs, value.max_age,
+            "ttl_secs from gate pipeline must match CachedResponse.max_age"
+        );
         let entry = Arc::new(CachedResponse {
             max_age: ttl_secs,
             ..value

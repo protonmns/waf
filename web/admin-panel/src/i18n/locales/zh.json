@@ -421,6 +421,8 @@
     "subtitle": "实时缓存性能指标",
     "hitRatio": "命中率",
     "entries": "缓存条目",
+    "opsPerSec": "每秒操作数",
+    "tagIndex": "标签索引（键数）",
     "memoryUsed": "内存使用",
     "backend": "后端",
     "mode": "模式",

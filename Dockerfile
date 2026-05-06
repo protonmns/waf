@@ -77,6 +77,8 @@ COPY --from=builder /build/target/release/prx-waf /usr/local/bin/prx-waf
 # Copy the Valkey server binary for embedded mode (backend = "embedded").
 # EmbeddedValkey finds it at /usr/local/bin/valkey-server via PATH when
 # binary_path is empty in [cache.embedded].
+# If you only use [cache] backend = "memory" or external Valkey and never
+# "embedded", you may omit the valkey-source stage and this COPY to shrink the image.
 COPY --from=valkey-source /usr/local/bin/valkey-server /usr/local/bin/valkey-server
 
 # Copy default config, OWASP rules, and frontend dist

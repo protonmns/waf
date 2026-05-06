@@ -344,7 +344,8 @@ pub struct ValkeyClientConfig {
     /// Path to CA certificate PEM for peer verification (optional).
     #[serde(default)]
     pub tls_ca_cert: Option<String>,
-    /// Connections per node in the connection pool.
+    /// Capacity hint for the fred client (maps to `PerformanceConfig::broadcast_channel_capacity`;
+    /// the bundled `RedisClient` is multiplexed, not per-key connection pools — see fred `build_pool`).
     #[serde(default = "default_pool_size")]
     pub pool_size: usize,
     /// TCP connection timeout in milliseconds.

@@ -86,10 +86,16 @@ impl ValkeyStore {
             ..RedisConfig::default()
         };
 
+        // `pool_size` drives fred broadcast-channel capacity (this client is a
+        // single multiplexed `RedisClient`, not `build_pool`; see fred docs).
+        let pool_cap = cfg.pool_size.clamp(4, 4096);
         let client = Arc::new(
             Builder::from_config(redis_cfg)
                 .with_connection_config(|c| {
                     c.connection_timeout = Duration::from_millis(cfg.connect_timeout_ms);
+                })
+                .with_performance_config(|p| {
+                    p.broadcast_channel_capacity = pool_cap;
                 })
                 .build()
                 .map_err(|e| anyhow::anyhow!("fred build error: {e}"))?,
@@ -153,6 +159,11 @@ impl ValkeyStore {
     }
 
     /// SCAN-based key collection with a deadline budget.
+    ///
+    /// **Cluster limitation:** Redis/Valkey `SCAN` runs on the node that
+    /// receives the command only; it does not fan out to every shard.
+    /// [`Self::purge_host`] and [`Self::flush`] are therefore **best-effort**
+    /// in cluster mode unless extended with a cluster-wide scan API.
     /// Returns all matching keys up to `limit` pages; stops early on error.
     async fn scan_keys(&self, pattern: &str, page_size: u32) -> Vec<String> {
         let mut keys = Vec::new();
@@ -213,7 +224,7 @@ impl CacheBackend for ValkeyStore {
             .timed(self.client.set::<(), _, _>(
                 &vk,
                 serialized,
-                Some(Expiration::EX(ttl_secs.cast_signed())),
+                Some(Expiration::EX(i64::try_from(ttl_secs).unwrap_or(i64::MAX))),
                 None,
                 false,
             ))
@@ -386,6 +397,16 @@ impl CacheBackend for ValkeyStore {
     }
 }
 
+fn parse_host_port(addr: &str) -> anyhow::Result<(String, u16)> {
+    let (host, port_str) = addr
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow::anyhow!("invalid address (missing port): {addr}"))?;
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid port in address: {addr}"))?;
+    Ok((host.to_string(), port))
+}
+
 // ── Circuit breaker ───────────────────────────────────────────────────────────
 
 /// Circuit-breaker state.
@@ -394,6 +415,24 @@ enum CircuitState {
     Closed,
     Open,
     HalfOpen,
+}
+
+const fn circuit_breaker_state_from_counters(
+    failures: u32,
+    threshold: u32,
+    tripped_at: u64,
+    reset_secs: u64,
+    now_secs: u64,
+) -> CircuitState {
+    if failures < threshold {
+        return CircuitState::Closed;
+    }
+    let elapsed = now_secs.saturating_sub(tripped_at);
+    if elapsed >= reset_secs {
+        CircuitState::HalfOpen
+    } else {
+        CircuitState::Open
+    }
 }
 
 /// Wraps a `ValkeyStore` with a `MokaStore` fallback.
@@ -432,17 +471,13 @@ impl CircuitBreakerStore {
     }
 
     fn state(&self) -> CircuitState {
-        let failures = self.failures.load(Ordering::Relaxed);
-        if failures < self.threshold {
-            return CircuitState::Closed;
-        }
-        let tripped_at = self.tripped_at.load(Ordering::Relaxed);
-        let elapsed = Self::now_secs().saturating_sub(tripped_at);
-        if elapsed >= self.reset_secs {
-            CircuitState::HalfOpen
-        } else {
-            CircuitState::Open
-        }
+        circuit_breaker_state_from_counters(
+            self.failures.load(Ordering::Relaxed),
+            self.threshold,
+            self.tripped_at.load(Ordering::Relaxed),
+            self.reset_secs,
+            Self::now_secs(),
+        )
     }
 
     fn state_label(&self) -> &'static str {
@@ -579,14 +614,39 @@ impl CacheBackend for CircuitBreakerStore {
     }
 }
 
-// ── Parse helpers ─────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod circuit_breaker_tests {
+    use super::{CircuitState, circuit_breaker_state_from_counters};
 
-fn parse_host_port(addr: &str) -> anyhow::Result<(String, u16)> {
-    let (host, port_str) = addr
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow::anyhow!("invalid address (missing port): {addr}"))?;
-    let port: u16 = port_str
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid port in address: {addr}"))?;
-    Ok((host.to_string(), port))
+    #[test]
+    fn cb_closed_when_failures_below_threshold() {
+        assert_eq!(
+            circuit_breaker_state_from_counters(2, 5, 0, 60, 1_000),
+            CircuitState::Closed
+        );
+    }
+
+    #[test]
+    fn cb_open_when_tripped_and_within_reset_window() {
+        assert_eq!(
+            circuit_breaker_state_from_counters(5, 3, 1_000, 60, 1_005),
+            CircuitState::Open
+        );
+    }
+
+    #[test]
+    fn cb_half_open_after_reset_secs_elapsed() {
+        assert_eq!(
+            circuit_breaker_state_from_counters(5, 3, 1_000, 60, 1_100),
+            CircuitState::HalfOpen
+        );
+    }
+
+    #[test]
+    fn cb_exact_threshold_is_open_when_tripped_recently() {
+        assert_eq!(
+            circuit_breaker_state_from_counters(3, 3, 500, 30, 510),
+            CircuitState::Open
+        );
+    }
 }
