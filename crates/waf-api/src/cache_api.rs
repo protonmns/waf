@@ -83,7 +83,7 @@ const fn default_limit() -> usize {
 // ── Existing endpoints ────────────────────────────────────────────────────────
 
 /// GET /api/cache/stats — cache hit/miss/eviction counters (extended with
-/// hit_ratio, backend name, and last_updated_at timestamp).
+/// `hit_ratio`, backend name, and `last_updated_at` timestamp).
 pub async fn cache_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let snap = state.cache.stats();
     let count = state.cache.entry_count();
@@ -228,7 +228,7 @@ pub async fn cache_stats_timeseries(
     let payload: Vec<serde_json::Value> = buckets
         .into_iter()
         .map(|b| {
-            let ts = chrono::DateTime::from_timestamp(b.ts as i64, 0)
+            let ts = chrono::DateTime::from_timestamp(b.ts.cast_signed(), 0)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_default();
             json!({

@@ -33,9 +33,7 @@ use serde_json as json;
 use tracing::{debug, warn};
 use waf_common::config::ValkeyClientConfig;
 
-use super::backend::{
-    BackendHealth, BackendInfo, CacheBackend, CachedResponse, KeyspaceSummary, WireCachedResponse,
-};
+use super::backend::{BackendHealth, BackendInfo, CacheBackend, CachedResponse, KeyspaceSummary, WireCachedResponse};
 use super::moka_store::MokaStore;
 
 const KEY_PREFIX: &str = "prx:cache:";
@@ -59,10 +57,13 @@ impl ValkeyStore {
         use fred::types::{RedisConfig, ServerConfig};
 
         let server = if cfg.seeds.len() <= 1 {
-            // Parse first seed as host:port
-            let seed = cfg.seeds.first().map(String::as_str).unwrap_or("127.0.0.1:6379");
-            let (host, port) = parse_host_port(seed)?;
-            ServerConfig::new_centralized(host, port)
+            let seed = cfg.seeds.first().map_or("127.0.0.1:6379", String::as_str);
+            if let Some(path) = seed.strip_prefix("unix:") {
+                ServerConfig::new_unix_socket(path)
+            } else {
+                let (host, port) = parse_host_port(seed)?;
+                ServerConfig::new_centralized(host, port)
+            }
         } else {
             // Cluster mode: provide all seeds; fred discovers the rest.
             let nodes: Vec<(String, u16)> = cfg
@@ -75,9 +76,13 @@ impl ValkeyStore {
 
         let redis_cfg = RedisConfig {
             server,
-            database: Some(cfg.db.into()),
+            database: Some(cfg.db),
             username: None,
-            password: if cfg.password.is_empty() { None } else { Some(cfg.password.clone()) },
+            password: if cfg.password.is_empty() {
+                None
+            } else {
+                Some(cfg.password.clone())
+            },
             ..RedisConfig::default()
         };
 
@@ -93,7 +98,7 @@ impl ValkeyStore {
         // `init()` spawns the connection task and waits until the first connection
         // is established (or fails). We drop the returned `ConnectHandle` — fred
         // keeps the connection alive internally regardless.
-        let _ = client
+        client
             .init()
             .await
             .map_err(|e| anyhow::anyhow!("valkey connect error: {e}"))?;
@@ -138,7 +143,10 @@ impl ValkeyStore {
                 None
             }
             Err(_) => {
-                warn!(timeout_ms = self.command_timeout.as_millis(), "valkey command timed out");
+                warn!(
+                    timeout_ms = self.command_timeout.as_millis(),
+                    "valkey command timed out"
+                );
                 None
             }
         }
@@ -159,11 +167,7 @@ impl ValkeyStore {
             match scanner.next().await {
                 Some(Ok(mut page)) => {
                     if let Some(page_keys) = page.take_results() {
-                        for k in page_keys {
-                            if let Some(s) = k.into_string() {
-                                keys.push(s);
-                            }
-                        }
+                        keys.extend(page_keys.into_iter().filter_map(RedisKey::into_string));
                     }
                     // Scanner stream ends when cursor reaches 0.
                 }
@@ -206,7 +210,13 @@ impl CacheBackend for ValkeyStore {
 
         // SET key value EX ttl
         let set_ok = self
-            .timed(self.client.set::<(), _, _>(&vk, serialized, Some(Expiration::EX(ttl_secs as i64)), None, false))
+            .timed(self.client.set::<(), _, _>(
+                &vk,
+                serialized,
+                Some(Expiration::EX(ttl_secs.cast_signed())),
+                None,
+                false,
+            ))
             .await
             .is_some();
 
@@ -292,7 +302,7 @@ impl CacheBackend for ValkeyStore {
     async fn ping(&self) -> BackendHealth {
         let start = Instant::now();
         match tokio::time::timeout(self.command_timeout, self.client.ping::<()>()).await {
-            Ok(Ok(_)) => BackendHealth::healthy(start.elapsed().as_micros() as u64),
+            Ok(Ok(())) => BackendHealth::healthy(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX)),
             Ok(Err(e)) => BackendHealth::unhealthy(e.to_string()),
             Err(_) => BackendHealth::unhealthy("ping timed out"),
         }
@@ -354,6 +364,26 @@ impl CacheBackend for ValkeyStore {
             circuit_breaker: "closed".to_string(),
         }
     }
+
+    async fn tag_entry_counts(&self) -> Vec<(String, u64)> {
+        let pattern = format!("{TAG_PREFIX}*");
+        let keys = self.scan_keys(&pattern, 100).await;
+        let mut out = Vec::with_capacity(keys.len());
+        for tag_key in keys {
+            let Some(rest) = tag_key.strip_prefix(TAG_PREFIX) else {
+                continue;
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            let n = self
+                .timed(self.client.scard::<u32, _>(&tag_key))
+                .await
+                .map_or(0, u64::from);
+            out.push((rest.to_string(), n));
+        }
+        out
+    }
 }
 
 // ── Circuit breaker ───────────────────────────────────────────────────────────
@@ -398,8 +428,7 @@ impl CircuitBreakerStore {
     fn now_secs() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_secs())
     }
 
     fn state(&self) -> CircuitState {
@@ -434,7 +463,10 @@ impl CircuitBreakerStore {
         if prev + 1 >= self.threshold && self.tripped_at.load(Ordering::Relaxed) == 0 {
             let now = Self::now_secs();
             self.tripped_at.store(now, Ordering::Relaxed);
-            warn!(threshold = self.threshold, "cache circuit breaker opened — falling back to moka");
+            warn!(
+                threshold = self.threshold,
+                "cache circuit breaker opened — falling back to moka"
+            );
         }
     }
 
@@ -472,23 +504,17 @@ impl CacheBackend for CircuitBreakerStore {
     }
 
     async fn put(&self, key: &str, value: CachedResponse, ttl_secs: u64, tags: &[Arc<str>]) -> bool {
-        match self.state() {
-            CircuitState::Open => {
-                // Store in fallback only.
-                self.fallback.put(key, value, ttl_secs, tags).await
-            }
-            _ => {
-                let stored = self.inner.put(key, value.clone(), ttl_secs, tags).await;
-                if stored {
-                    self.record_success();
-                } else {
-                    self.record_failure();
-                    // Write-through to fallback on Valkey failure.
-                    return self.fallback.put(key, value, ttl_secs, tags).await;
-                }
-                stored
-            }
+        if self.state() == CircuitState::Open {
+            return self.fallback.put(key, value, ttl_secs, tags).await;
         }
+        let stored = self.inner.put(key, value.clone(), ttl_secs, tags).await;
+        if stored {
+            self.record_success();
+        } else {
+            self.record_failure();
+            return self.fallback.put(key, value, ttl_secs, tags).await;
+        }
+        stored
     }
 
     async fn remove(&self, key: &str) {
@@ -538,6 +564,18 @@ impl CacheBackend for CircuitBreakerStore {
         let mut info = self.inner.backend_info().await;
         info.circuit_breaker = self.state_label().to_string();
         info
+    }
+
+    async fn tag_entry_counts(&self) -> Vec<(String, u64)> {
+        use std::collections::HashMap;
+        let mut acc: HashMap<String, u64> = HashMap::new();
+        for (k, v) in self.inner.tag_entry_counts().await {
+            acc.entry(k).and_modify(|e| *e = (*e).max(v)).or_insert(v);
+        }
+        for (k, v) in self.fallback.tag_entry_counts().await {
+            acc.entry(k).and_modify(|e| *e = (*e).max(v)).or_insert(v);
+        }
+        acc.into_iter().collect()
     }
 }
 

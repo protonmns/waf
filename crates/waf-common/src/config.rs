@@ -282,7 +282,7 @@ pub struct HostEntry {
 /// Values: `"memory"` (default, moka LRU in-process) | `"embedded"` (spawn
 /// valkey-server child) | `"standalone"` (external single Valkey node) |
 /// `"cluster"` (external Valkey/Redis cluster).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CacheBackendKind {
     #[default]

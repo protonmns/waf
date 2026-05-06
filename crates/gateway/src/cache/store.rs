@@ -18,6 +18,7 @@
 //! Storage hits/misses are tracked at this layer too so the same counters work
 //! regardless of which backend is active.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -33,6 +34,15 @@ use super::policy::{CacheCtx, CachePolicyResolver, Verdict};
 use super::rule_set::{CompiledRuleSet, RuleSetHolder};
 use super::stats::{CacheStats, CacheStatsSnapshot, RouteStats, TimeseriesBucket};
 
+fn parse_cache_key(key: &str) -> Option<(&str, &str, &str)> {
+    let main = key.split_once('?').map_or(key, |(a, _)| a);
+    let mut parts = main.splitn(3, ':');
+    let method = parts.next()?;
+    let host = parts.next()?;
+    let path = parts.next()?;
+    Some((method, host, path))
+}
+
 /// Shared response cache.
 ///
 /// Holds the resolver pipeline and bypass counters. All storage operations
@@ -40,6 +50,7 @@ use super::stats::{CacheStats, CacheStatsSnapshot, RouteStats, TimeseriesBucket}
 pub struct ResponseCache {
     backend: Arc<dyn CacheBackend>,
     stats: Arc<CacheStats>,
+    rules: Arc<RuleSetHolder>,
     default_ttl: Duration,
     max_ttl: Duration,
     resolver: CachePolicyResolver,
@@ -87,7 +98,7 @@ impl ResponseCache {
             Box::new(TierGate),
             Box::new(MethodGate),
             Box::new(AuthGate),
-            Box::new(RouteRuleGate::new(rules)),
+            Box::new(RouteRuleGate::new(Arc::clone(&rules))),
             Box::new(UpstreamCcGate),
             Box::new(TierDefaultGate),
         ]);
@@ -95,6 +106,7 @@ impl ResponseCache {
         Arc::new(Self {
             backend,
             stats: Arc::new(CacheStats::default()),
+            rules,
             default_ttl: Duration::from_secs(default_ttl_secs),
             max_ttl: Duration::from_secs(max_ttl_secs),
             resolver,
@@ -119,12 +131,25 @@ impl ResponseCache {
     /// Symmetric tier gate (FR-009 AC-1): CRITICAL-tier requests are never
     /// served a cached entry even if one was stored before reclassification.
     pub async fn get(&self, key: &str, tier: Tier) -> Option<Arc<CachedResponse>> {
+        let route_label = parse_cache_key(key).and_then(|(method, host, path)| {
+            self.rules
+                .load()
+                .first_cacheable_rule_id(host, path, method)
+                .map(|s| s.as_ref().to_string())
+        });
         if matches!(tier, Tier::Critical) {
             self.stats.bypassed_critical.fetch_add(1, Ordering::Relaxed);
             trace!(key = %key, "cache bypass: CRITICAL tier");
             return None;
         }
         let result = self.backend.get(key).await;
+        if let Some(ref label) = route_label {
+            if result.is_some() {
+                self.stats.record_route_hit(label);
+            } else {
+                self.stats.record_route_miss(label);
+            }
+        }
         if result.is_some() {
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
             trace!(key = %key, "cache hit");
@@ -177,7 +202,12 @@ impl ResponseCache {
                 false
             }
             Verdict::Cache { ttl, tags } => {
-                let entry = CachedResponse { status, headers, body, max_age: ttl.as_secs() };
+                let entry = CachedResponse {
+                    status,
+                    headers,
+                    body,
+                    max_age: ttl.as_secs(),
+                };
                 let stored = self.backend.put(&key, entry, ttl.as_secs(), &tags).await;
                 if stored {
                     self.stats.stores.fetch_add(1, Ordering::Relaxed);
@@ -260,14 +290,36 @@ impl ResponseCache {
 
     /// Return top cached routes by hits. `limit` caps the result count.
     ///
-    /// For the `memory` backend the tag index is used; for Valkey the server
-    /// SCAN is used inside `ValkeyStore`. Currently returns an empty list
-    /// for the memory backend (no per-route hit tracking at entry level).
+    /// Merges per-tag entry counts from the active backend with in-process
+    /// hit/miss counters keyed by rule id (or `"_default"`).
     pub async fn top_routes(&self, limit: usize) -> Vec<RouteStats> {
-        // Future: query backend for per-route stats.
-        // For now: build from in-memory tag index (entry count per route tag).
-        let _ = limit;
-        vec![]
+        let tag_map: HashMap<String, u64> = self.backend.tag_entry_counts().await.into_iter().collect();
+        let traffic = self.stats.route_traffic_snapshot();
+        let mut route_ids: HashSet<String> = tag_map.keys().cloned().collect();
+        for k in traffic.keys() {
+            route_ids.insert(k.clone());
+        }
+        let mut rows: Vec<RouteStats> = route_ids
+            .into_iter()
+            .map(|id| {
+                let entry_count = *tag_map.get(&id).unwrap_or(&0);
+                let (hits, misses) = traffic.get(&id).copied().unwrap_or((0, 0));
+                RouteStats {
+                    route_id: id,
+                    hits,
+                    misses,
+                    entry_count,
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            b.hits
+                .cmp(&a.hits)
+                .then_with(|| b.entry_count.cmp(&a.entry_count))
+                .then_with(|| a.route_id.cmp(&b.route_id))
+        });
+        rows.truncate(limit);
+        rows
     }
 }
 

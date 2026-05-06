@@ -99,7 +99,7 @@ impl CacheBackend for MokaStore {
             .filter(|(k, _)| {
                 let mut parts = k.splitn(3, ':');
                 parts.next(); // method
-                parts.next().map_or(false, |h| h == host)
+                parts.next() == Some(host)
             })
             .map(|(k, _)| k.to_string())
             .collect();
@@ -144,6 +144,10 @@ impl CacheBackend for MokaStore {
             health: BackendHealth::healthy(0),
             circuit_breaker: "closed".to_string(),
         }
+    }
+
+    async fn tag_entry_counts(&self) -> Vec<(String, u64)> {
+        self.tag_index.tag_entry_counts()
     }
 }
 

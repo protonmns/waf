@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use waf_common::tier::{CachePolicy, Tier};
 use waf_common::{HostConfig, RequestCtx};
 use waf_engine::device_fp::DeviceIdentity;
 use waf_engine::relay::ClientIdentity;
@@ -9,6 +10,26 @@ use crate::protocol::Protocol;
 
 /// Maximum request body bytes buffered for WAF inspection (64 KiB).
 pub const BODY_PREVIEW_LIMIT: usize = 64 * 1024;
+
+/// Maximum bytes buffered from upstream for response caching.
+pub const RESPONSE_CACHE_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// FR-009: state for deferred `ResponseCache::put` after the upstream body completes.
+pub struct ResponseCachePending {
+    pub key: String,
+    pub host: String,
+    pub path: String,
+    pub tier: Tier,
+    pub cache_policy: CachePolicy,
+    pub has_authorization: bool,
+    pub has_cookie: bool,
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub cache_control: Option<String>,
+    pub body: BytesMut,
+    /// Set in `response_filter` once headers are snapshotted and buffering is allowed.
+    pub capture_started: bool,
+}
 
 /// Per-request state stored in the Pingora session context
 #[derive(Default)]
@@ -42,6 +63,8 @@ pub struct GatewayCtx {
     /// FR-010 phase-07: resolved device fingerprint identity. `None` when the
     /// detector is not configured or before `request_filter` has run.
     pub device_identity: Option<DeviceIdentity>,
+    /// FR-009: buffer a cacheable upstream response for [`crate::cache::ResponseCache::put`].
+    pub response_cache_store: Option<ResponseCachePending>,
 }
 
 /// Per-response state for the streaming body masker (AC-17).

@@ -12,7 +12,7 @@ max_connections = 20
 # ── FR-009: Response Caching ──────────────────────────────────────────────────
 #
 # backend choices:
-#   "memory"     — in-process Moka LRU (default, no extra process)
+#   "memory"     — in-process Moka LRU (no extra process; use for local run without Valkey)
 #   "embedded"   — spawn valkey-server as a child process via UNIX socket
 #   "standalone" — connect to an external Valkey/Redis instance
 #   "cluster"    — connect to a Valkey cluster (topology auto-discovered)
@@ -28,8 +28,9 @@ max_ttl_secs = 3600
 # FR-009 Phase 3: per-route TTL rules. Hot-reloaded on file change.
 # Missing file is non-fatal at boot (logs warn, runs with no per-route rules).
 rules_path = "rules/cache.yaml"
-# Cache backend (default: memory).  Uncomment one of the sections below.
-backend = "memory"
+# Cache backend. Docker Compose default stack uses standalone Valkey (service
+# "valkey"); for local dev without Compose, set "memory" or "embedded".
+backend = "standalone"
 
 # ── Embedded Valkey (backend = "embedded") ────────────────────────────────────
 # Spawns a valkey-server child process using a UNIX socket.
@@ -41,18 +42,19 @@ backend = "memory"
 # extra_args  = []              # additional valkey-server flags
 
 # ── Standalone Valkey (backend = "standalone") ────────────────────────────────
+# Hostname `valkey` matches the docker-compose.yml service name.
 #
-# [cache.valkey]
-# seeds                    = ["127.0.0.1:6379"]
-# password                 = ""
-# db                       = 0
-# tls                      = false
-# pool_size                = 4
-# connect_timeout_ms       = 2000
-# command_timeout_ms       = 500
-# circuit_breaker_threshold  = 5   # consecutive failures before opening
-# circuit_breaker_reset_secs = 30  # seconds before trying half-open
-# fallback_to_memory       = true  # degrade to in-process cache on failure
+[cache.valkey]
+seeds                    = ["valkey:6379"]
+password                 = ""
+db                       = 0
+tls                      = false
+pool_size                = 4
+connect_timeout_ms       = 2000
+command_timeout_ms       = 500
+circuit_breaker_threshold  = 5
+circuit_breaker_reset_secs = 30
+fallback_to_memory       = true
 
 # ── Valkey Cluster (backend = "cluster") ─────────────────────────────────────
 #

@@ -20,6 +20,7 @@
 //! See [`policy`] for the Chain of Responsibility design rationale.
 
 pub mod backend;
+pub mod bootstrap;
 pub mod config;
 pub mod embedded_valkey;
 pub mod gates;
@@ -34,6 +35,7 @@ pub mod valkey_store;
 pub mod watcher;
 
 pub use backend::{BackendHealth, BackendInfo, CachedResponse};
+pub use bootstrap::{CacheInit, init_response_cache};
 pub use rule_set::{CompiledRuleSet, RuleSetError, RuleSetHolder};
 pub use stats::{CacheStatsSnapshot, TimeseriesBucket};
 pub use store::ResponseCache;

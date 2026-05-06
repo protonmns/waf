@@ -42,7 +42,7 @@ pub struct EmbeddedValkey {
     /// UNIX socket path used by the embedded server.
     pub socket_path: PathBuf,
     /// TCP fallback address (`127.0.0.1:0` when port=0, so unused here; kept
-    /// for the "connect via UNIX socket" path in ValkeyStore).
+    /// for the "connect via UNIX socket" path in [`ValkeyStore`]).
     pub connect_addr: String,
 }
 
@@ -74,7 +74,7 @@ impl EmbeddedValkey {
             "--port".to_string(),
             "0".to_string(),
             "--save".to_string(),
-            "".to_string(),
+            String::new(),
             "--maxmemory".to_string(),
             format!("{max_size_mb}mb"),
             "--maxmemory-policy".to_string(),
@@ -97,15 +97,19 @@ impl EmbeddedValkey {
         debug!(pid = child.id(), socket = %socket_path.display(), "valkey-server spawned");
 
         // Wait until the UNIX socket is ready.
-        wait_ready(&socket_path, Duration::from_secs(5)).await.map_err(|e| {
-            anyhow::anyhow!("embedded Valkey did not become ready within 5s: {e}")
-        })?;
+        wait_ready(&socket_path, Duration::from_secs(5))
+            .await
+            .map_err(|e| anyhow::anyhow!("embedded Valkey did not become ready within 5s: {e}"))?;
 
         info!(socket = %socket_path.display(), "embedded Valkey ready");
 
         let connect_addr = format!("unix:{}", socket_path.display());
 
-        Ok(Self { child, socket_path, connect_addr })
+        Ok(Self {
+            child,
+            socket_path,
+            connect_addr,
+        })
     }
 
     /// Returns the connect address suitable for the Valkey client:
@@ -181,7 +185,10 @@ async fn wait_ready(socket_path: &PathBuf, timeout: Duration) -> anyhow::Result<
         }
 
         if tokio::time::Instant::now() >= deadline {
-            return Err(anyhow::anyhow!("timeout waiting for UNIX socket: {}", socket_path.display()));
+            return Err(anyhow::anyhow!(
+                "timeout waiting for UNIX socket: {}",
+                socket_path.display()
+            ));
         }
 
         sleep(poll_interval).await;

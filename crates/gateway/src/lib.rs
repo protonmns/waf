@@ -11,6 +11,7 @@ pub mod policies;
 pub mod protocol;
 pub mod proxy;
 pub mod proxy_waf_response;
+pub mod response_cache_integration;
 pub mod router;
 pub mod ssl;
 pub mod tiered;

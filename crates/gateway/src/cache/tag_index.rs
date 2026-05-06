@@ -78,6 +78,14 @@ impl TagIndex {
         self.key_to_tags.len()
     }
 
+    /// Per-tag entry counts (cardinality of each tag bucket).
+    pub fn tag_entry_counts(&self) -> Vec<(String, u64)> {
+        self.tag_to_keys
+            .iter()
+            .map(|r| (r.key().as_ref().to_string(), r.value().len() as u64))
+            .collect()
+    }
+
     /// Total distinct tags tracked. Used by tests and by stats responses to
     /// observe whether the index shrinks correctly under purge/eviction.
     #[cfg(test)]

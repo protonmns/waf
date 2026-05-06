@@ -88,12 +88,20 @@ pub struct BackendHealth {
 }
 
 impl BackendHealth {
-    pub fn healthy(latency_us: u64) -> Self {
-        Self { ok: true, latency_us, error: None }
+    pub const fn healthy(latency_us: u64) -> Self {
+        Self {
+            ok: true,
+            latency_us,
+            error: None,
+        }
     }
 
     pub fn unhealthy(error: impl Into<String>) -> Self {
-        Self { ok: false, latency_us: 0, error: Some(error.into()) }
+        Self {
+            ok: false,
+            latency_us: 0,
+            error: Some(error.into()),
+        }
     }
 }
 
@@ -191,4 +199,7 @@ pub trait CacheBackend: Send + Sync + 'static {
 
     /// Collect backend-specific info for the `/api/cache/backend` endpoint.
     async fn backend_info(&self) -> BackendInfo;
+
+    /// Per-tag counts (keys associated with each tag) for dashboard top-routes.
+    async fn tag_entry_counts(&self) -> Vec<(String, u64)>;
 }
