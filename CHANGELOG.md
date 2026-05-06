@@ -11,6 +11,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **FR-005 DDoS protection** — L7 burst detection with auto-block. Three
+  detection layers evaluated in parallel: **PerIpDetector** (sliding-window
+  counter per client IP, threshold: `ddos.per_ip.threshold_rps`),
+  **PerFingerPrintDetector** (groups requests by device fingerprint from FR-010
+  JA3/JA4 + HTTP/2 hash to detect botnet attacks across rotating IPs; fallback
+  to per-IP if fingerprint unavailable), and **PerTierDetector** (adaptive
+  threshold per tier: Critical/High/Medium/CatchAll, detects tier-wide bursts).
+  TTL-escalating bans (60s → 5m → 1h) via `access::ip_table` plus risk bump to
+  FR-025 risk scorer. Store backends: MemoryStore (100K cap, 10min idle eviction)
+  or RedisStore (single Lua script roundtrip, 50ms timeout; feature `redis-store`).
+  BreakerStore circuit-breaker (5 failure threshold) routes to memory fallback on
+  Redis errors. Graceful degradation honours per-tier `fail_mode` policy
+  (Close=block, Open=pass on store error). Hot-reloadable via
+  `configs/default.toml` `[ddos]` section. Metrics: `ddos_detector_evaluations_total`,
+  `ddos_hard_burst_total`, `ddos_bans_issued_total`, `ddos_ban_table_size`,
+  `ddos_store_errors_total`, `ddos_degrade_events_total`, `ddos_detector_latency_us`.
+  Operator guide: [`docs/ddos-protection.md`](docs/ddos-protection.md). Module:
+  `crates/waf-engine/src/checks/ddos/`. Plan:
+  `plans/260505-0954-fr-005-ddos-protection/`. Rule IDs: `DDOS-BAN`, `DDOS-RISK`,
+  `DDOS-DEGRADE`.
+
 - **FR-012 transaction velocity & sequence detection** — Cross-endpoint
   behavioral fraud detection that flags rapid `login → OTP → deposit`
   sequences, withdrawal velocity bursts, and limit-change storms. Signal-only:

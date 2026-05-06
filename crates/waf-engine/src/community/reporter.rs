@@ -81,7 +81,8 @@ const fn compute_confidence(phase: Phase) -> f64 {
         Phase::DirTraversal | Phase::Owasp => 0.85,
         Phase::CustomRule | Phase::IpBlacklist | Phase::UrlBlacklist => 0.80,
         Phase::Sensitive | Phase::Scanner | Phase::Bot => 0.70,
-        Phase::RateLimit | Phase::CrowdSec => 0.60,
+        // DDoS detection based on observed traffic patterns — moderate confidence
+        Phase::RateLimit | Phase::CrowdSec | Phase::Ddos => 0.60,
         Phase::Community => 0.50,
         Phase::GeoIp | Phase::AntiHotlink => 0.40,
         // Whitelist phases rarely trigger signal reporting,

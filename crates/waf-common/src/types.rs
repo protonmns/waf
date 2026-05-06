@@ -154,6 +154,8 @@ pub enum Phase {
     GeoIp = 17,
     /// Community threat intelligence blocklist
     Community = 18,
+    /// `DDoS` burst detection (FR-005)
+    Ddos = 19,
 }
 
 impl std::fmt::Display for Phase {
@@ -177,6 +179,7 @@ impl std::fmt::Display for Phase {
             Self::CrowdSec => write!(f, "CrowdSec"),
             Self::GeoIp => write!(f, "GeoIP"),
             Self::Community => write!(f, "Community"),
+            Self::Ddos => write!(f, "DDoS"),
         }
     }
 }

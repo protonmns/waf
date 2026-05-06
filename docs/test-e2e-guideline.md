@@ -1,13 +1,20 @@
 # Nightly E2E Suite
 
-Drives the [`.github/workflows/nightly-e2e.yml`](../../.github/workflows/nightly-e2e.yml)
-workflow. Each suite emits **JUnit XML**, **JSON** and **Markdown** artefacts that the
-workflow renders as a GitHub run summary, a Checks-tab report and a downloadable
-HTML page.
+Drives two nightly test workflows:
 
-The goal is to keep the WAF's main user-facing surfaces — rule engine, gateway
-proxy, admin API, and cluster — exercised end-to-end every night so that a
-regression introduced anywhere in the stack is caught before it ships.
+1. **[`.github/workflows/nightly-e2e.yml`](../../.github/workflows/nightly-e2e.yml)** — Shell-based integration suites
+   - Exercises rule engine, gateway proxy, admin API, and cluster end-to-end
+   - Spins up Docker Compose stacks (single-node + 3-node cluster)
+   - Each suite emits **JUnit XML**, **JSON**, and **Markdown** artefacts
+   - Aggregated report published to workflow summary and GitHub Checks
+
+2. **[`.github/workflows/ddos-soak.yml`](../../.github/workflows/ddos-soak.yml)** — FR-005 DDoS soak test (separate)
+   - Memory/leak surveillance: 5+ min sustained load at 1K+ RPS
+   - Verifies ban table growth bounded, RSS drift <5%, no panics
+   - Runs nightly on schedule; also triggered by `workflow_dispatch` for manual PR validation
+   - See [ddos-protection.md](./ddos-protection.md) for detailed test suite
+
+The goal is to catch regressions in main user-facing surfaces every night before they ship.
 
 ---
 

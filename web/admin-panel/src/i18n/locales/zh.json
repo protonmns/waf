@@ -5,6 +5,7 @@
     "ipRules": "IP 规则",
     "urlRules": "URL 规则",
     "securityEvents": "安全事件",
+    "logs": "安全日志",
     "customRules": "自定义规则",
     "certificates": "SSL 证书",
     "ccProtection": "CC 防护",

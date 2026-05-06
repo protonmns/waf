@@ -39,6 +39,9 @@ pub struct AppConfig {
     /// (e.g. `configs/rate-limit.yaml`). Omit ⇒ subsystem inert.
     #[serde(default)]
     pub rate_limit: RateLimitFileRef,
+    /// `VictoriaLogs` managed sidecar configuration (opt-in)
+    #[serde(default)]
+    pub victoria_logs: VictoriaLogsConfig,
 }
 
 /// Path reference for `configs/rate-limit.yaml`.
@@ -687,10 +690,160 @@ impl Default for SqliScanConfig {
     }
 }
 
+// ── VictoriaLogs sidecar configuration ────────────────────────────────────────
+
+/// `VictoriaLogs` managed sidecar configuration.
+///
+/// `prx-waf` runs `VictoriaLogs` as an in-process child when `enabled = true`.
+/// The binary is installed on demand (see `auto_install`) and the listener is
+/// constrained to loopback because `VictoriaLogs` itself has no built-in
+/// authentication; all external access must go through the WAF management API.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VictoriaLogsConfig {
+    /// Master switch — when `false`, the entire pipeline is a no-op.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Filesystem path to the `victoria-logs` binary.
+    #[serde(default = "default_vlogs_binary_path")]
+    pub binary_path: String,
+    /// Directory where `VictoriaLogs` stores its data partitions.
+    #[serde(default = "default_vlogs_storage_path")]
+    pub storage_data_path: String,
+    /// HTTP listen address. **Must be loopback** — validated at load time.
+    #[serde(default = "default_vlogs_listen_addr")]
+    pub listen_addr: String,
+    /// Time-based retention period (e.g. `"30d"`, `"7d"`).
+    #[serde(default = "default_vlogs_retention")]
+    pub retention_period: String,
+    /// Hard size cap on data directory; oldest partitions deleted on overflow.
+    #[serde(default = "default_vlogs_max_disk")]
+    pub max_disk_space_bytes: String,
+    /// Safety stop — `VictoriaLogs` rejects writes when free disk drops below this.
+    #[serde(default = "default_vlogs_min_free_disk")]
+    pub min_free_disk_bytes: String,
+    /// Release tag to download via `installer` (e.g. `"v1.50.0"`).
+    #[serde(default = "default_vlogs_version")]
+    pub version: String,
+    /// Auto-download the binary when missing. When `false`, `enabled = true`
+    /// requires the operator to provision the binary out-of-band.
+    #[serde(default = "default_true")]
+    pub auto_install: bool,
+    /// Batch buffer flush threshold (entries).
+    #[serde(default = "default_vlogs_batch_size")]
+    pub batch_size: usize,
+    /// Batch buffer max age before flush (milliseconds).
+    #[serde(default = "default_vlogs_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    /// Pending-entries channel capacity. Older entries are dropped when full.
+    #[serde(default = "default_vlogs_channel_capacity")]
+    pub channel_capacity: usize,
+}
+
+fn default_vlogs_binary_path() -> String {
+    "/var/lib/prx-waf/victoria-logs/victoria-logs".to_string()
+}
+fn default_vlogs_storage_path() -> String {
+    "/var/lib/prx-waf/victoria-logs/data".to_string()
+}
+fn default_vlogs_listen_addr() -> String {
+    "127.0.0.1:9428".to_string()
+}
+fn default_vlogs_retention() -> String {
+    "30d".to_string()
+}
+fn default_vlogs_max_disk() -> String {
+    "100GiB".to_string()
+}
+fn default_vlogs_min_free_disk() -> String {
+    "1GiB".to_string()
+}
+fn default_vlogs_version() -> String {
+    "v1.50.0".to_string()
+}
+const fn default_vlogs_batch_size() -> usize {
+    100
+}
+const fn default_vlogs_flush_interval_ms() -> u64 {
+    1000
+}
+const fn default_vlogs_channel_capacity() -> usize {
+    10_000
+}
+
+impl Default for VictoriaLogsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            binary_path: default_vlogs_binary_path(),
+            storage_data_path: default_vlogs_storage_path(),
+            listen_addr: default_vlogs_listen_addr(),
+            retention_period: default_vlogs_retention(),
+            max_disk_space_bytes: default_vlogs_max_disk(),
+            min_free_disk_bytes: default_vlogs_min_free_disk(),
+            version: default_vlogs_version(),
+            auto_install: true,
+            batch_size: default_vlogs_batch_size(),
+            flush_interval_ms: default_vlogs_flush_interval_ms(),
+            channel_capacity: default_vlogs_channel_capacity(),
+        }
+    }
+}
+
+impl VictoriaLogsConfig {
+    /// Validate the config. Only enforced when `enabled = true` so a default
+    /// (disabled) `AppConfig` remains usable without any of the fields filled.
+    ///
+    /// Listener must be loopback because `VictoriaLogs` has no built-in auth —
+    /// exposing it externally would let any reachable client read or delete
+    /// audit logs without going through the WAF JWT/role checks.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.storage_data_path.trim().is_empty() {
+            anyhow::bail!("victoria_logs.storage_data_path must not be empty");
+        }
+        if self.binary_path.trim().is_empty() {
+            anyhow::bail!("victoria_logs.binary_path must not be empty");
+        }
+        let addr: std::net::SocketAddr = self.listen_addr.parse().map_err(|e| {
+            anyhow::anyhow!(
+                "victoria_logs.listen_addr is not a valid socket address ('{}'): {e}",
+                self.listen_addr
+            )
+        })?;
+        if !addr.ip().is_loopback() {
+            anyhow::bail!(
+                "victoria_logs.listen_addr must bind to a loopback address \
+                 (got '{}'). VictoriaLogs has no built-in authentication; \
+                 external access must go through the WAF /api/v1/logs proxy.",
+                self.listen_addr
+            );
+        }
+        Ok(())
+    }
+
+    /// JSON-Lines ingest URL used by the `tracing` layer and audit sender.
+    pub fn ingest_url(&self) -> String {
+        format!("http://{}/insert/jsonline", self.listen_addr)
+    }
+
+    /// `VictoriaLogs` HTTP base URL (no path component).
+    ///
+    /// The `waf-api` proxy appends per-endpoint paths (`/select/logsql/query`,
+    /// `/select/logsql/stats_query`, `/select/logsql/field_values`, `/metrics`)
+    /// onto this — so this function MUST return only the host root.
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.listen_addr)
+    }
+}
+
 /// Load configuration from a TOML file
 pub fn load_config(path: &str) -> anyhow::Result<AppConfig> {
     let content = std::fs::read_to_string(path)?;
     let config: AppConfig = toml::from_str(&content)?;
+    config.victoria_logs.validate()?;
     Ok(config)
 }
 

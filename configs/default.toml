@@ -157,6 +157,28 @@ config_path = "configs/rate-limit.yaml"
 # check_interval_secs   = 5
 # max_missed_heartbeats = 3
 
+# ── VictoriaLogs managed sidecar ─────────────────────────────────────────────
+# `prx-waf` runs `victoria-logs` as an in-process child for centralised audit +
+# tracing log storage. The listener MUST stay on a loopback address —
+# VictoriaLogs has no built-in auth, so external access is funnelled through
+# the WAF /api/v1/logs proxy with the existing JWT.
+#
+# Set `enabled = false` to turn the entire pipeline into a no-op (no download,
+# no child process, no audit ingest).
+[victoria_logs]
+enabled = true
+binary_path = "/var/lib/prx-waf/victoria-logs/victoria-logs"
+storage_data_path = "/var/lib/prx-waf/victoria-logs/data"
+listen_addr = "127.0.0.1:9428"     # loopback ONLY — validated at load time
+retention_period = "30d"
+max_disk_space_bytes = "100GiB"
+min_free_disk_bytes = "1GiB"
+version = "v1.50.0"
+auto_install = true                # download from upstream if missing
+batch_size = 100                   # entries per ingest batch
+flush_interval_ms = 1000           # flush deadline regardless of batch fill
+channel_capacity = 10000           # drop-oldest threshold for the buffer
+
 # ── Community Integration ─────────────────────────────────────────────────────
 # Share threat intelligence with the OpenPRX community network.
 # Enable to report detected attacks and receive the community blocklist.

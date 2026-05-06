@@ -57,6 +57,14 @@ pub struct AppState {
     pub panel_config_path: Option<PathBuf>,
     /// Path to the main WAF config file the server was started with (e.g. `configs/default.toml`).
     pub main_config_file: Option<String>,
+    /// `VictoriaLogs` HTTP base URL (e.g. `http://127.0.0.1:9428`, no path
+    /// component). `None` when `[victoria_logs] enabled = false` — log proxy
+    /// endpoints then return 503.
+    pub victoria_logs_base_url: Option<String>,
+    /// Memoised response for `GET /api/v1/logs/streams`.  60-second TTL —
+    /// distinct-value enumeration is expensive on `VictoriaLogs` and the FE
+    /// only needs it to populate filter dropdowns.
+    pub logs_streams_cache: Arc<crate::logs::StreamsCache>,
 }
 
 impl AppState {
@@ -103,6 +111,8 @@ impl AppState {
             login_rate_limiter: None,
             panel_config_path: None,
             main_config_file: None,
+            victoria_logs_base_url: None,
+            logs_streams_cache: crate::logs::new_streams_cache(),
         })
     }
 

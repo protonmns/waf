@@ -26,6 +26,9 @@ src/
 ├── checks/                  # Individual security checks
 │   ├── sql_injection{,_patterns,_scanners}, xss, rce, dir_traversal,
 │   ├── geo, cc, bot, scanner, sensitive, anti_hotlink, owasp
+│   ├── ddos/                # FR-005 DDoS protection (config + detector strategy)
+│   │   ├── detector/        # Detector trait + implementations (per-IP, per-fingerprint, per-tier)
+│   │   └── store/           # Counter backends (memory, redis)
 ├── rules/
 │   ├── engine.rs, manager.rs, registry.rs, hot_reload.rs, sources.rs,
 │   ├── custom_file_loader.rs

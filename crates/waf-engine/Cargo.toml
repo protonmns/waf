@@ -17,6 +17,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+# Phase 02 — VictoriaLogs `tracing` Layer impl lives in `logging::vlogs_layer`.
+tracing-subscriber = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 regex = { workspace = true }
@@ -60,7 +62,13 @@ criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3"
 wiremock = "0.6"
 proptest = "1"
+rstest = "0.23"
+mockall = "0.13"
+tracing-test = "0.2"
 reqwest = { workspace = true, features = ["stream", "gzip"] }
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
 
 [[bench]]
 name = "sql_injection"
@@ -92,6 +100,10 @@ harness = false
 
 [[bench]]
 name = "tx_velocity_bench"
+harness = false
+
+[[bench]]
+name = "ddos_counter"
 harness = false
 
 [features]

@@ -68,7 +68,7 @@ Per-request flow runs in five stages:
 1. **Pre-Phase — Relay Detection (FR-007)** — `RelayDetector::evaluate` validates XFF / X-Real-IP headers, detects trusted-proxy chains, classifies ASN (residential/datacenter/Tor), and emits signals. Output `ClientIdentity { real_ip, asn_class, asn, signals }` attached to `RequestCtx` for downstream rule predicates.
 2. **Pre-Phase — Tier Classification (FR-002)** — `TierPolicyRegistry::classify` resolves `(Tier, Arc<TierPolicy>)` from request parts; result attached to `RequestCtx` before any phase.
 3. **Phase-0 — Access Gate (FR-008)** — Host gate → IP blacklist → IP whitelist (per-tier `full_bypass`/`blacklist_only` dispatch). *Future*: IP evaluation to use `ClientIdentity.real_ip` instead of peer IP. Short-circuits before the rule pipeline.
-4. **Phases 1–16 — Rule Pipeline** — IP/URL filtering → **FR-004 rate limiting (IP + session keys, token-bucket + sliding-window per tier)** → **FR-011 behavioral anomaly detection (per-actor cadence/path classifiers, 16-slot ring, signal cap ≤40)** → payload attacks (SQLi/XSS/RCE/traversal) → custom rules → OWASP CRS → sensitive data → anti-hotlink → CrowdSec. Final decision: Allow / Block / Challenge.
+4. **Phases 1–16 — Rule Pipeline** — IP/URL filtering → **FR-004 rate limiting (IP + session keys, token-bucket + sliding-window per tier)** → **FR-005 DDoS detection (per-IP/per-fingerprint/per-tier sliding-window with dynamic banning and graceful degrade)** → **FR-011 behavioral anomaly detection (per-actor cadence/path classifiers, 16-slot ring, signal cap ≤40)** → payload attacks (SQLi/XSS/RCE/traversal) → custom rules → OWASP CRS → sensitive data → anti-hotlink → CrowdSec. Final decision: Allow / Block / Challenge.
 5. **Post-Decision — FR-009 Smart Caching** — If Allow: tier gate (CRITICAL never cached) → Chain-of-Responsibility gates → store response in moka LRU if eligible (tags indexed for purge).
 6. **Risk Scoring (FR-025/026)** — Per-signal `risk_score_delta` from YAML; aggregated risk score influences final decision (future integration).
 
@@ -926,6 +926,26 @@ All events logged via `tracing` crate:
 - Database errors
 - Authentication failures
 - High request latency
+
+### VictoriaLogs Archive (opt-in)
+
+When `[victoria_logs] enabled = true`, the WAF runs a managed VictoriaLogs
+sidecar (loopback only, validated at config load) and ships two independent
+streams into it:
+
+| Stream | Source | Schema |
+|--------|--------|--------|
+| `waf_tracing` | `tracing_subscriber::Layer` (`waf-engine::logging::VictoriaLogsLayer`) | `_time`, `_msg`, `level`, `target`, span fields |
+| `waf_audit` | `WafEngine::send_audit_event` (one record per non-Allow decision) | `event_type`, `rule_name`, `client_ip`, `host`, `method`, `path`, `tier`, `detail`, `req_id` |
+
+Both streams share a fail-open batch buffer (`waf-engine::logging::BatchSender`):
+saturated channels drop entries with a 30 s rate-limited warn, so the WAF
+request path never blocks on observability.
+
+The admin panel queries this archive through admin-only proxy endpoints —
+`GET /api/v1/logs/{query,stats,streams}` — which validate JWT + role,
+reject `LogsQL` write/delete pipes, and cap responses at 50 MiB. No SSRF
+surface: the proxy targets only the loopback `base_url()`.
 
 ---
 

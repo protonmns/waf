@@ -10,6 +10,7 @@ import { HashRouter, Outlet, Route, Routes } from "react-router-dom";
 import { ConfigProvider, App as AntdApp } from "antd";
 
 import { dataProvider } from "./providers/data-provider";
+import { victoriaLogsDataProvider } from "./providers/victoria-logs-data-provider";
 import { authProvider } from "./providers/auth-provider";
 import { i18nProvider } from "./providers/i18n-provider";
 import { liveProvider } from "./providers/live-provider";
@@ -17,9 +18,11 @@ import { useAppTheme } from "./hooks/use-app-theme";
 import { useQueryClient } from "./hooks/use-query-client";
 import { AppLayout } from "./layouts/app-layout";
 import { ErrorBoundary } from "./components/error-boundary";
+import { AdminOnly } from "./components/admin-only";
 
 import { LoginPage } from "./pages/login";
 import { DashboardPage } from "./pages/dashboard";
+import { LogsPage } from "./pages/logs";
 import { HostsPage } from "./pages/hosts";
 import { IpRulesPage } from "./pages/ip-rules";
 import { UrlRulesPage } from "./pages/url-rules";
@@ -50,6 +53,7 @@ const resources = [
   { name: "ip-rules", list: "/ip-rules" },
   { name: "url-rules", list: "/url-rules" },
   { name: "security-events", list: "/security-events" },
+  { name: "logs", list: "/logs", meta: { dataProviderName: "vlogs" } },
   { name: "custom-rules", list: "/custom-rules" },
   { name: "certificates", list: "/certificates" },
   { name: "cc-protection", list: "/cc-protection" },
@@ -78,7 +82,10 @@ export const App: React.FC = () => {
          <ErrorBoundary>
           <RefineKbarProvider>
             <Refine
-              dataProvider={dataProvider}
+              dataProvider={{
+                default: dataProvider,
+                vlogs: victoriaLogsDataProvider,
+              }}
               authProvider={authProvider}
               i18nProvider={i18nProvider}
               liveProvider={liveProvider}
@@ -109,6 +116,7 @@ export const App: React.FC = () => {
                   <Route path="/ip-rules" element={<IpRulesPage />} />
                   <Route path="/url-rules" element={<UrlRulesPage />} />
                   <Route path="/security-events" element={<SecurityEventsPage />} />
+                  <Route path="/logs" element={<AdminOnly><LogsPage /></AdminOnly>} />
                   <Route path="/custom-rules" element={<CustomRulesPage />} />
                   <Route path="/certificates" element={<CertificatesPage />} />
                   <Route path="/cc-protection" element={<CcProtectionPage />} />

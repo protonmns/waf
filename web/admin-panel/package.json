@@ -12,6 +12,10 @@
   "dependencies": {
     "@ant-design/icons": "^5.5.2",
     "@ant-design/plots": "^2.3.2",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/modifiers": "^9.0.0",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@refinedev/antd": "^6.0.3",
     "@refinedev/core": "^5.0.12",
     "@refinedev/kbar": "^2.0.1",

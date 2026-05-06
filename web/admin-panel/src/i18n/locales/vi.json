@@ -5,6 +5,7 @@
     "ipRules": "Luật IP",
     "urlRules": "Luật URL",
     "securityEvents": "Sự kiện bảo mật",
+    "logs": "Nhật ký bảo mật",
     "customRules": "Luật tùy chỉnh",
     "certificates": "Chứng chỉ SSL",
     "ccProtection": "Chống CC",

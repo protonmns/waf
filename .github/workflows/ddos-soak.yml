@@ -1,0 +1,86 @@
+# FR-005 DDoS Soak Test - Nightly CI
+#
+# Runs a 30-minute sustained load test to verify:
+# - RSS memory drift < 5%
+# - Key count bounded (< 100k)
+#
+# Schedule: 4 AM UTC daily
+# Manual trigger: workflow_dispatch
+
+name: DDoS Soak Test
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Test duration in minutes"
+        default: "30"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  soak:
+    name: DDoS Soak Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-soak-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-soak-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release tests
+        run: cargo build --release -p waf-engine --tests
+
+      - name: Run DDoS soak test
+        run: |
+          echo "Starting 30-minute soak test..."
+          cargo test --release --test ddos_soak -- --ignored --nocapture
+        env:
+          RUST_LOG: warn
+
+      - name: Run quick soak test
+        run: |
+          echo "Running quick soak test for validation..."
+          cargo test --release --test ddos_soak soak_quick_5min -- --nocapture
+        env:
+          RUST_LOG: warn
+
+      - name: Collect memory metrics
+        if: always()
+        run: |
+          echo "## Memory Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Test completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- System memory:" >> $GITHUB_STEP_SUMMARY
+          free -h >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-test-logs
+          path: |
+            target/release/.fingerprint/waf-engine*/
+          retention-days: 7

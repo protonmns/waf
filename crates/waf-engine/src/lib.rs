@@ -8,6 +8,7 @@ pub mod device_fp;
 pub mod engine;
 pub mod geoip;
 pub mod geoip_updater;
+pub mod logging;
 pub mod plugins;
 pub mod relay;
 pub mod rules;

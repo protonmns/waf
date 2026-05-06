@@ -5,6 +5,7 @@
     "ipRules": "IP Rules",
     "urlRules": "URL Rules",
     "securityEvents": "Security Events",
+    "logs": "Security Logs",
     "customRules": "Custom Rules",
     "certificates": "SSL Certificates",
     "ccProtection": "CC Protection",

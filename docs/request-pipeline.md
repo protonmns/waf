@@ -141,14 +141,35 @@ FR-004 Rate Limiting: Tiered token-bucket + sliding-window
 Config: configs/rate-limit.yaml (hot-reload via notify, 200ms debounce, ArcSwap)
 ```
 
-**Legacy format (for backward compat, removed after v0.3.0):**
+### Phase 5.1: DDoS Detection (FR-005)
 
 ```
-Phase 5: CC/DDoS Rate Limiting (simplified view)
-├─ Per-IP sliding-window counter
-├─ Increment on each request
-├─ If counter > threshold → BLOCK (or challenge)
-└─ else → continue to Phase 5.5
+FR-005 DDoS Protection: Multi-layer detection with dynamic banning
+├─ Position: AFTER rate-limit (catch token-bucket exhaustion first)
+├─ Three detectors run in parallel:
+│  ├─ PerIpDetector: sliding-window counter per IP
+│  │  └─ threshold: tier.policy.ddos_threshold_rps (requests/sec)
+│  │  └─ window: 1 second
+│  ├─ PerFingerPrintDetector: sliding-window per device fingerprint (if available)
+│  │  └─ groups requests by FpKey across multiple IPs (botnet detection)
+│  │  └─ fallback to PerIpDetector if FpKey unavailable
+│  └─ PerTierDetector: adaptive threshold per tier (Critical/High/Medium/CatchAll)
+│     └─ detects tier-wide bursts; config: ddos.per_tier.<tier>_threshold_rps
+├─ On detector trigger (HardBurst event):
+│  ├─ DdosAction::Ban → add IP to ban table (TTL: 60s default)
+│  │  └─ subsequent requests from banned IP short-circuit → 403 DDOS-BAN
+│  ├─ DdosAction::RiskBump → emit Signal::DdosSuspected (to FR-025 risk scorer)
+│  └─ DdosAction::Degrade → on store error (Redis down):
+│     ├─ tier.policy.fail_mode == Close → BLOCK (safe-default)
+│     └─ tier.policy.fail_mode == Open → ALLOW (assume legitimate)
+├─ Store backend: MemoryStore (100K cap, idle eviction) or RedisStore (Lua script)
+├─ BreakerStore circuit-breaker: fallback to memory on >5 Redis failures
+├─ Metrics: ddos_detector_evaluations_total, ddos_hard_burst_total, ddos_bans_issued_total
+│  └─ Labels: {tier, detector_type, error_kind}
+└─ If no burst → continue to Phase 6
+
+Config: configs/default.toml [ddos] section
+Operator guide: docs/ddos-protection.md
 ```
 
 ### Phase 5.5: Transaction Velocity & Sequence (FR-012)

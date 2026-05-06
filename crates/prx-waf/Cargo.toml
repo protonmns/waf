@@ -25,6 +25,11 @@ uuid = { workspace = true }
 regex = { workspace = true }
 ipnet = { workspace = true }
 
+# VictoriaLogs sidecar installer (Phase 1.2): download + SHA-256 verify
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
 pingora-core = { workspace = true }
 pingora-proxy = { workspace = true }
 

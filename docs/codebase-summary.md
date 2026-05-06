@@ -70,6 +70,24 @@ prx-waf/
 │   │   │   ├── sensitive.rs   # Sensitive data (Aho-Corasick)
 │   │   │   ├── hotlink.rs     # Anti-hotlink (Referer)
 │   │   │   ├── crowdsec.rs    # CrowdSec bouncer + AppSec
+│   │   │   ├── ddos/          # FR-005 DDoS protection (multi-layer detection: per-IP, per-fingerprint, per-tier; dynamic banning + graceful degrade)
+│   │   │   │   ├── check.rs       # DdosCheck orchestrator (invokes detector pipeline, aggregates verdicts, emits action)
+│   │   │   │   ├── config.rs      # TOML schema ([ddos], [ddos.per_ip], [ddos.per_tier]) + validation
+│   │   │   │   ├── reload.rs      # notify-based hot-reload with ArcSwap snapshot
+│   │   │   │   ├── detector/      # Detector trait + 3 implementations
+│   │   │   │   │   ├── mod.rs         # Detector trait (evaluate(ctx, cfg, now_ms) → DetectorVerdict::HardBurst)
+│   │   │   │   │   ├── clock.rs       # SystemClock + MockClock for testing
+│   │   │   │   │   ├── baseline.rs    # BaselineDetector (quantized buckets, per-IP window)
+│   │   │   │   │   ├── per_ip.rs      # PerIpDetector (sliding-window, wraps CounterStore)
+│   │   │   │   │   ├── per_fp.rs      # PerFingerPrintDetector (device_fp aggregation, fallback to per-IP)
+│   │   │   │   │   └── per_tier.rs    # PerTierDetector (aggregate RPS per tier, adaptive threshold)
+│   │   │   │   ├── action.rs      # DdosAction executor (Ban, RiskBump, Degrade); IpTable (dynamic ban table w/ TTL)
+│   │   │   │   ├── degrade.rs     # OverloadGuard (store error handling, per-tier fail-mode dispatch)
+│   │   │   │   ├── metrics.rs     # DdosMetrics (Prometheus: detections, bans, errors, latency)
+│   │   │   │   └── store/         # Counter backends (CounterStore trait)
+│   │   │   │       ├── mod.rs         # CounterStore trait (async incr, purge_expired)
+│   │   │   │       ├── memory.rs      # MemoryCounterStore (DashMap + idle eviction, 100K cap)
+│   │   │   │       └── redis.rs       # RedisCounterStore (Lua script, 50ms timeout; feature redis-store)
 │   │   │   ├── tx_velocity/   # FR-012 transaction velocity anomaly detection (role-tagging, sequence timing, withdrawal burst)
 │   │   │   │   ├── check.rs       # TxVelocityCheck (Check trait impl, signal-only)
 │   │   │   │   ├── recorder.rs    # DashMap<SessionKey, ActorTx>, event recording, cooldown logic

@@ -66,9 +66,14 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
 # Runtime dependencies
+#   - ca-certificates / libssl3: TLS for upstreams + GitHub release downloads
+#   - curl:                      container HEALTHCHECK probe (HTTP /health)
+#   - tar:                       VictoriaLogs installer extracts the upstream tar.gz
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
+    curl \
+    tar \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy WAF binary

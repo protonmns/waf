@@ -106,6 +106,42 @@ Tiered rate limiting with token-bucket (burst) and sliding-window (sustained) al
 
 ---
 
+### FR-005 — DDoS Protection (Complete ✓)
+
+Multi-layer DDoS detection with per-IP, per-fingerprint, and per-tier sliding-window detectors. Dynamic IP banning with TTL, graceful degradation on store failures (Redis down), and per-tier fail-mode policies (Close=block, Open=pass). Three detection layers: (1) **PerIpDetector** — incremental sliding-window counter per client IP; threshold: `ddos.per_ip.threshold_rps` (configurable, e.g., 1000 RPS). (2) **PerFingerPrintDetector** — groups requests by device fingerprint (FR-010 JA3/JA4 + HTTP/2 hash) to detect botnet attacks across rotating IPs; fallback to per-IP if fingerprint unavailable. (3) **PerTierDetector** — adaptive RPS threshold per tier (Critical/High/Medium/CatchAll), detects tier-wide bursts (e.g., all Critical endpoints hammered). Store backends: MemoryStore (100K cap, idle-eviction 10min) or RedisStore (single Lua script roundtrip, 50ms timeout). BreakerStore circuit-breaker (5 failure threshold) routes to memory fallback on Redis errors. Actions: **Ban** (add IP to ban table, TTL 60s, short-circuits to 403), **RiskBump** (emit `Signal::DdosSuspected` to FR-025 risk scorer), **Degrade** (fail-open/close per tier policy on store error). Nightly soak test (5+ min sustained 1K RPS) verifies memory growth <5%, ban table bounded <300K entries, no panics. Rule IDs: `DDOS-BAN`, `DDOS-RISK`, `DDOS-DEGRADE`.
+
+- [x] Per-IP sliding-window detector (16-bit quantized buckets, per-tier threshold)
+- [x] Per-fingerprint detector (FpKey from FR-010; fallback to per-IP)
+- [x] Per-tier detector (adaptive threshold per Tier enum)
+- [x] Ban table (in-memory hash map, TTL-based eviction)
+- [x] MemoryStore (DashMap, idle-eviction, background cleanup)
+- [x] RedisStore (Lua script, 50ms timeout, feature-gated)
+- [x] BreakerStore (circuit-breaker, fallback to memory)
+- [x] DdosAction executor (Ban, RiskBump, Degrade)
+- [x] Per-tier fail-mode degradation (Close=block, Open=pass)
+- [x] Metrics: detections, hard bursts, bans issued, store errors, degrade events, latency histogram
+- [x] Integration tests (I1-I4): per-IP ban, per-FP fallback, per-tier detection, config reload
+- [x] Scenario tests (a-e): baseline traffic, single IP flood, botnet pattern, tier fail-modes, Redis down
+- [x] Soak test (nightly): 5+ min at 1K RPS, memory drift <5%, ban table <300K
+- [x] GitHub workflow (`.github/workflows/ddos-soak.yml`): scheduled nightly + manual dispatch
+- [x] Plan: `plans/260505-0954-fr-005-ddos-protection/` (10 phases, all complete)
+
+**Deliverables**
+- Module: `crates/waf-engine/src/checks/ddos/`
+- Config: `configs/default.toml` `[ddos]` section + `[ddos.per_tier]`
+- Tests: `crates/waf-engine/tests/{ddos_integration,ddos_scenarios,ddos_soak,ddos_loom,ddos_proptest}.rs`
+- CI workflow: `.github/workflows/ddos-soak.yml` (nightly schedule + manual trigger)
+- Operator guide: `docs/ddos-protection.md`
+- Metrics: `ddos_detector_evaluations_total`, `ddos_hard_burst_total`, `ddos_bans_issued_total`, `ddos_ban_table_size`, `ddos_store_errors_total`, `ddos_degrade_events_total`, `ddos_detector_latency_us`
+
+**Performance (verified in soak test):**
+- Detector latency p99: <500µs per request
+- Ban table lookup: <100µs
+- Memory growth: <5% drift over 5+ min sustained load
+- Ban table capacity: 100K entries (soft limit; hard cap enforced)
+
+---
+
 ### FR-009 — Smart Caching (Complete ✓)
 
 Response caching with tier-aware bypass logic and tag-based purge. CRITICAL tier never cached (non-overridable). Pipeline refactored to Chain-of-Responsibility: TierGate → MethodGate → AuthGate → RouteRuleGate → UpstreamCcGate → TierDefaultGate. YAML hot-reload of `rules/cache.yaml` (notify, 200ms debounce, ArcSwap, schema v1). Tag index (DashMap reverse-index, moka eviction listeners) with admin endpoints for purge-by-tag / purge-by-route and cache stats. Schema: defaults (max_body_bytes, cacheable_status_codes [200,203,301,410]), rules with id/match{host,path.regex,methods}/ttl_seconds/tags/allow_authenticated. Tier defaults: NoCache, ShortTtl{300}, Aggressive{600}, Default{60}.

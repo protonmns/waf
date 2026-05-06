@@ -122,6 +122,8 @@ fred = { version = "9", features = ["i-keys", "i-sets", "i-server", "i-cluster",
 [workspace.lints.rust]
 unsafe_code = "deny"
 unused_must_use = "deny"
+# Allow loom cfg for concurrency tests (waf-engine/tests/ddos_loom.rs)
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

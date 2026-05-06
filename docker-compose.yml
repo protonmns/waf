@@ -60,6 +60,7 @@ services:
       - ./configs:/app/configs      # rw: waf-panel.toml is written by the admin API
       - ./rules:/app/rules:ro
       - waf_certs:/app/certs
+      - vlogs_data:/var/lib/prx-waf/victoria-logs   # binary + log partitions (persistent)
     ports:
       - "16880:80"    # HTTP proxy
       - "16843:443"   # HTTPS proxy
@@ -81,8 +82,32 @@ services:
   # directly into the prx-waf binary via `rust_embed` and served at
   # http://localhost:16827/ui/. No standalone nginx container is needed.
 
+  # ── OWASP Juice Shop (test target — DELIBERATELY VULNERABLE) ─────────────────
+  # Reverse-proxied through prx-waf to exercise the WAF rules end-to-end.
+  # Reachable inside the compose network as `juice-shop:3000`. The host port
+  # 13000 is exposed only as a fallback / direct-access escape hatch — for
+  # WAF testing always go through prx-waf (http://localhost:16880 with the
+  # appropriate Host header, e.g. `Host: juice.local`).
+  #
+  # ⚠️ Do NOT expose this container publicly — Juice Shop is intentionally
+  # exploitable and is meant to live behind a WAF on a trusted network only.
+  juice-shop:
+    image: docker.io/bkimminich/juice-shop:latest
+    container_name: juice-shop
+    restart: unless-stopped
+    ports:
+      - "13000:3000"   # direct access (bypassing WAF) — comment out to lock down
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/rest/admin/application-version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   postgres_data:
     driver: local
   waf_certs:
+    driver: local
+  vlogs_data:
     driver: local

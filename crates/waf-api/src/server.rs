@@ -33,6 +33,7 @@ use crate::handlers::{
     reload_rules, reload_sqli_scan_config, update_host, upload_certificate, upsert_hotlink_config,
 };
 use crate::health::health_check;
+use crate::logs::{logs_query, logs_stats, logs_streams};
 use crate::middleware::require_auth;
 use crate::notifications::{
     create_notification, delete_notification, list_notifications, notification_log, test_notification,
@@ -205,6 +206,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/crowdsec/stats", get(crowdsec_stats))
         .route("/api/crowdsec/events", get(list_crowdsec_events))
+        // Phase 02 (VictoriaLogs): admin-only LogsQL proxy. JWT comes from
+        // the shared `require_auth` layer below; the role check is enforced
+        // inside each handler so it can return 403 with a useful body.
+        .route("/api/v1/logs/query", get(logs_query))
+        .route("/api/v1/logs/stats", get(logs_stats))
+        .route("/api/v1/logs/streams", get(logs_streams))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .layer(middleware::from_fn_with_state(
             state.clone(),
