@@ -22,7 +22,9 @@
     "rules": "Luật",
     "ruleManager": "Quản lý luật",
     "ruleSources": "Nguồn luật",
-    "botDetection": "Phát hiện bot"
+    "botDetection": "Phát hiện bot",
+    "cache": "Cache",
+    "cacheDashboard": "Bảng điều khiển Cache"
   },
   "common": {
     "save": "Lưu",
@@ -461,5 +463,35 @@
     "syncInSync": "Đồng bộ",
     "syncDriftAlert": "Phát hiện lệch version luật",
     "syncNoCluster": "Cluster chưa bật"
+  },
+  "cache": {
+    "title": "Bảng điều khiển Cache",
+    "subtitle": "Chỉ số hiệu suất cache thời gian thực",
+    "hitRatio": "Tỷ lệ hit",
+    "entries": "Số bản ghi",
+    "opsPerSec": "Ops/giây",
+    "tagIndex": "Chỉ mục tag (số khóa)",
+    "memoryUsed": "Bộ nhớ dùng",
+    "backend": "Backend",
+    "mode": "Chế độ",
+    "version": "Phiên bản",
+    "connected": "Kết nối",
+    "circuitBreaker": "Circuit Breaker",
+    "topRoutes": "Route được cache nhiều nhất",
+    "backendInfo": "Thông tin Backend",
+    "hitMissTimeline": "Biểu đồ Hit/Miss (60 phút)",
+    "hits": "Hit",
+    "misses": "Miss",
+    "nodes": "Nodes",
+    "role": "Vai trò",
+    "slots": "Slots",
+    "actions": "Thao tác Cache",
+    "purgeTag": "Xoá theo Tag",
+    "purgeRoute": "Xoá theo Route",
+    "flushAll": "Xoá toàn bộ Cache",
+    "confirmFlush": "Thao tác này sẽ xoá TẤT CẢ cache. Tiếp tục?",
+    "purged": "Đã xoá {{n}} bản ghi",
+    "flushed": "Đã xoá toàn bộ cache",
+    "purgeError": "Thao tác thất bại"
   }
 }

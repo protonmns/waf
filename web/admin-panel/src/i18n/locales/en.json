@@ -22,7 +22,9 @@
     "rules": "Rules",
     "ruleManager": "Rule Manager",
     "ruleSources": "Rule Sources",
-    "botDetection": "Bot Detection"
+    "botDetection": "Bot Detection",
+    "cache": "Cache",
+    "cacheDashboard": "Cache Dashboard"
   },
   "common": {
     "save": "Save",
@@ -461,5 +463,35 @@
     "syncInSync": "In sync",
     "syncDriftAlert": "Rules version drift detected",
     "syncNoCluster": "Cluster not enabled"
+  },
+  "cache": {
+    "title": "Cache Dashboard",
+    "subtitle": "Real-time cache performance metrics",
+    "hitRatio": "Hit Ratio",
+    "entries": "Entries",
+    "opsPerSec": "Ops / sec",
+    "tagIndex": "Tag index (keys)",
+    "memoryUsed": "Memory Used",
+    "backend": "Backend",
+    "mode": "Mode",
+    "version": "Version",
+    "connected": "Connected",
+    "circuitBreaker": "Circuit Breaker",
+    "topRoutes": "Top Cached Routes",
+    "backendInfo": "Backend Info",
+    "hitMissTimeline": "Hit / Miss Timeline (60 min)",
+    "hits": "Hits",
+    "misses": "Misses",
+    "nodes": "Nodes",
+    "role": "Role",
+    "slots": "Slots",
+    "actions": "Cache Actions",
+    "purgeTag": "Purge by Tag",
+    "purgeRoute": "Purge by Route",
+    "flushAll": "Flush All Cache",
+    "confirmFlush": "This will evict ALL cached entries. Proceed?",
+    "purged": "Purged {{n}} entries",
+    "flushed": "Cache flushed",
+    "purgeError": "Operation failed"
   }
 }

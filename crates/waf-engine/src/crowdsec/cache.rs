@@ -1,3 +1,9 @@
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`/`from_hours`
+
+/// When the operator sets `cache_ttl_secs = 0` and a decision has no usable
+/// `duration` field, cached entries use this many seconds until expiry (4 hours).
+pub const DEFAULT_DECISION_CACHE_FALLBACK_SECS: u64 = 4 * 3_600;
+
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -182,8 +188,8 @@ impl DecisionCache {
         {
             return Instant::now() + Duration::from_secs(secs);
         }
-        // Default fallback: 4 hours
-        Instant::now() + Duration::from_hours(4)
+        // Default fallback: [`DEFAULT_DECISION_CACHE_FALLBACK_SECS`] (4 hours)
+        Instant::now() + Duration::from_secs(DEFAULT_DECISION_CACHE_FALLBACK_SECS)
     }
 
     fn insert_decision(&self, decision: &Decision, cached: CachedDecision) {
@@ -261,6 +267,11 @@ mod tests {
     use crate::crowdsec::config::CrowdSecConfig;
     use crate::crowdsec::models::{Decision, DecisionStream};
 
+    /// Stable margin around `Instant::now()` for past vs future in
+    /// `cached_decision_is_expired_reflects_instant` (not tied to
+    /// [`DEFAULT_DECISION_CACHE_FALLBACK_SECS`]).
+    const EXPIRY_INSTANT_TEST_MARGIN_SECS: u64 = 60;
+
     fn decision(scope: &str, value: &str, scenario: &str) -> Decision {
         Decision {
             id: 1,
@@ -288,11 +299,13 @@ mod tests {
     fn cached_decision_is_expired_reflects_instant() {
         let past = CachedDecision {
             decision: decision("Ip", "1.2.3.4", "test"),
-            expires_at: Instant::now().checked_sub(Duration::from_mins(1)).expect("clock"),
+            expires_at: Instant::now()
+                .checked_sub(Duration::from_secs(EXPIRY_INSTANT_TEST_MARGIN_SECS))
+                .expect("clock"),
         };
         let future = CachedDecision {
             decision: decision("Ip", "1.2.3.4", "test"),
-            expires_at: Instant::now() + Duration::from_mins(1),
+            expires_at: Instant::now() + Duration::from_secs(EXPIRY_INSTANT_TEST_MARGIN_SECS),
         };
         assert!(past.is_expired());
         assert!(!future.is_expired());

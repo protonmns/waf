@@ -16,7 +16,8 @@ use tracing::info;
 
 use crate::auth::{login, logout, refresh_token};
 use crate::cache_api::{
-    cache_flush, cache_flush_host, cache_flush_key, cache_purge_route, cache_purge_tag, cache_stats,
+    cache_backend_info, cache_flush, cache_flush_host, cache_flush_key, cache_list_tags, cache_purge_route,
+    cache_purge_tag, cache_stats, cache_stats_timeseries, cache_top_routes,
 };
 use crate::cluster::{cluster_status, generate_join_token, get_cluster_node, list_cluster_nodes, remove_cluster_node};
 use crate::crowdsec::{
@@ -173,6 +174,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // FR-009 Phase 4: tag-based + route-based purge.
         .route("/api/cache/purge/tag", post(cache_purge_tag))
         .route("/api/cache/purge/route", post(cache_purge_route))
+        // FR-009 Valkey dashboard endpoints.
+        .route("/api/cache/backend", get(cache_backend_info))
+        .route("/api/cache/stats/timeseries", get(cache_stats_timeseries))
+        .route("/api/cache/routes/top", get(cache_top_routes))
+        .route("/api/cache/tags", get(cache_list_tags))
         // Phase 5: Audit log
         .route("/api/audit-log", get(list_audit_log))
         // Rule registry (YAML filesystem scanner)

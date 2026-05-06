@@ -22,7 +22,9 @@
     "rules": "规则",
     "ruleManager": "规则管理",
     "ruleSources": "规则源",
-    "botDetection": "机器人检测"
+    "botDetection": "机器人检测",
+    "cache": "缓存",
+    "cacheDashboard": "缓存仪表盘"
   },
   "common": {
     "save": "保存",
@@ -414,5 +416,35 @@
     "syncInSync": "已同步",
     "syncDriftAlert": "检测到规则版本差异",
     "syncNoCluster": "集群未启用"
+  },
+  "cache": {
+    "title": "缓存仪表盘",
+    "subtitle": "实时缓存性能指标",
+    "hitRatio": "命中率",
+    "entries": "缓存条目",
+    "opsPerSec": "每秒操作数",
+    "tagIndex": "标签索引（键数）",
+    "memoryUsed": "内存使用",
+    "backend": "后端",
+    "mode": "模式",
+    "version": "版本",
+    "connected": "已连接",
+    "circuitBreaker": "熔断器",
+    "topRoutes": "热门缓存路由",
+    "backendInfo": "后端信息",
+    "hitMissTimeline": "命中/未命中时间线（60分钟）",
+    "hits": "命中",
+    "misses": "未命中",
+    "nodes": "节点",
+    "role": "角色",
+    "slots": "槽位",
+    "actions": "缓存操作",
+    "purgeTag": "按标签清除",
+    "purgeRoute": "按路由清除",
+    "flushAll": "清空全部缓存",
+    "confirmFlush": "此操作将清除所有缓存条目，确认继续？",
+    "purged": "已清除 {{n}} 条记录",
+    "flushed": "缓存已清空",
+    "purgeError": "操作失败"
   }
 }

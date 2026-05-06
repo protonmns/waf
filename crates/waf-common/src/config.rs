@@ -280,12 +280,137 @@ pub struct HostEntry {
     pub block_scripted_clients: Option<bool>,
 }
 
+/// Storage backend selector for the response cache.
+///
+/// Values: `"memory"` (default, moka LRU in-process) | `"embedded"` (spawn
+/// valkey-server child) | `"standalone"` (external single Valkey node) |
+/// `"cluster"` (external Valkey/Redis cluster).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheBackendKind {
+    #[default]
+    Memory,
+    Embedded,
+    Standalone,
+    Cluster,
+}
+
+/// Embedded Valkey child-process supervisor configuration.
+///
+/// Only read when `cache.backend = "embedded"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddedValkeyConfig {
+    /// Path to `valkey-server` binary. Empty → auto-detect from `PATH`,
+    /// then try `redis-server` as fallback.
+    #[serde(default)]
+    pub binary_path: String,
+    /// Working directory for Valkey data files (used when persistence enabled).
+    #[serde(default = "default_valkey_data_dir")]
+    pub data_dir: String,
+    /// Extra CLI arguments forwarded verbatim to `valkey-server`.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
+fn default_valkey_data_dir() -> String {
+    "/tmp/prx-valkey".to_string()
+}
+
+impl Default for EmbeddedValkeyConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: String::new(),
+            data_dir: default_valkey_data_dir(),
+            extra_args: Vec::new(),
+        }
+    }
+}
+
+/// Standalone or cluster Valkey/Redis client configuration.
+///
+/// Read when `cache.backend = "standalone"` or `"cluster"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValkeyClientConfig {
+    /// Seed nodes. Standalone: only the first entry is used.
+    /// Cluster: at least one required; `fred` discovers the rest automatically.
+    #[serde(default = "default_valkey_seeds")]
+    pub seeds: Vec<String>,
+    /// AUTH password / `requirepass`. Empty = unauthenticated.
+    #[serde(default)]
+    pub password: String,
+    /// Logical DB index. Ignored in cluster mode (always 0).
+    #[serde(default)]
+    pub db: u8,
+    /// Enable TLS.
+    #[serde(default)]
+    pub tls: bool,
+    /// Path to CA certificate PEM for peer verification (optional).
+    #[serde(default)]
+    pub tls_ca_cert: Option<String>,
+    /// Capacity hint for the fred client (maps to `PerformanceConfig::broadcast_channel_capacity`;
+    /// the bundled `RedisClient` is multiplexed, not per-key connection pools — see fred `build_pool`).
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
+    /// TCP connection timeout in milliseconds.
+    #[serde(default = "default_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    /// Per-command execution timeout in milliseconds.
+    #[serde(default = "default_command_timeout_ms")]
+    pub command_timeout_ms: u64,
+    /// Consecutive failures before the circuit breaker trips.
+    #[serde(default = "default_circuit_breaker_threshold")]
+    pub circuit_breaker_threshold: u32,
+    /// Seconds the circuit stays open before entering half-open probe.
+    #[serde(default = "default_circuit_breaker_reset_secs")]
+    pub circuit_breaker_reset_secs: u64,
+    /// When the circuit is open, transparently fall back to the local moka store.
+    #[serde(default = "default_true")]
+    pub fallback_to_memory: bool,
+}
+
+fn default_valkey_seeds() -> Vec<String> {
+    vec!["127.0.0.1:6379".to_string()]
+}
+const fn default_pool_size() -> usize {
+    4
+}
+const fn default_connect_timeout_ms() -> u64 {
+    2_000
+}
+const fn default_command_timeout_ms() -> u64 {
+    500
+}
+const fn default_circuit_breaker_threshold() -> u32 {
+    5
+}
+const fn default_circuit_breaker_reset_secs() -> u64 {
+    30
+}
+
+impl Default for ValkeyClientConfig {
+    fn default() -> Self {
+        Self {
+            seeds: default_valkey_seeds(),
+            password: String::new(),
+            db: 0,
+            tls: false,
+            tls_ca_cert: None,
+            pool_size: default_pool_size(),
+            connect_timeout_ms: default_connect_timeout_ms(),
+            command_timeout_ms: default_command_timeout_ms(),
+            circuit_breaker_threshold: default_circuit_breaker_threshold(),
+            circuit_breaker_reset_secs: default_circuit_breaker_reset_secs(),
+            fallback_to_memory: true,
+        }
+    }
+}
+
 /// Response caching configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfig {
     /// Enable response caching
     pub enabled: bool,
-    /// Maximum cache size in megabytes
+    /// Maximum cache size in megabytes (moka cap or `maxmemory` for embedded Valkey)
     pub max_size_mb: u64,
     /// Default TTL in seconds (used when Cache-Control is absent)
     pub default_ttl_secs: u64,
@@ -296,6 +421,15 @@ pub struct CacheConfig {
     /// Hot-reloaded at runtime; missing file is non-fatal at boot.
     #[serde(default)]
     pub rules_path: Option<std::path::PathBuf>,
+    /// Cache storage backend. Default `"memory"` uses the moka LRU.
+    #[serde(default)]
+    pub backend: CacheBackendKind,
+    /// Embedded Valkey process config (only used when `backend = "embedded"`).
+    #[serde(default)]
+    pub embedded: EmbeddedValkeyConfig,
+    /// External Valkey/Redis client config (`backend = "standalone"` or `"cluster"`).
+    #[serde(default)]
+    pub valkey: ValkeyClientConfig,
 }
 
 impl Default for CacheConfig {
@@ -306,6 +440,9 @@ impl Default for CacheConfig {
             default_ttl_secs: 60,
             max_ttl_secs: 3600,
             rules_path: None,
+            backend: CacheBackendKind::Memory,
+            embedded: EmbeddedValkeyConfig::default(),
+            valkey: ValkeyClientConfig::default(),
         }
     }
 }

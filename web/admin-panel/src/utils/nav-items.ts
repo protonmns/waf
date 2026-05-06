@@ -19,6 +19,7 @@ import {
   BookOutlined,
   BranchesOutlined,
   RobotOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import type { ComponentType } from "react";
 
@@ -55,4 +56,6 @@ export const navItems: NavItem[] = [
   { key: "rules-management", i18nKey: "nav.ruleManager", path: "/rules-management", icon: BookOutlined, section: "nav.rules" },
   { key: "rule-sources", i18nKey: "nav.ruleSources", path: "/rule-sources", icon: BranchesOutlined, section: "nav.rules" },
   { key: "bot-management", i18nKey: "nav.botDetection", path: "/bot-management", icon: RobotOutlined, section: "nav.rules" },
+
+  { key: "cache", i18nKey: "nav.cacheDashboard", path: "/cache", icon: ThunderboltOutlined, section: "nav.cache" },
 ];

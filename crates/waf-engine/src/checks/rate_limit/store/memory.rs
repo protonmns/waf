@@ -4,6 +4,8 @@
 //! breaker is open. Per-key entry packs `(TokenBucketState, SlidingWindowState)`
 //! so a single shard write-lock covers both algorithm steps atomically.
 
+#![allow(clippy::duration_suboptimal_units)] // prefer `from_secs` over MSRV‑gated `from_mins`
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,10 +19,10 @@ use crate::checks::rate_limit::store::{Decision, LimitCfg, RateLimitStore};
 const MAX_ENTRIES: usize = 100_000;
 
 /// Entries idle longer than this are eligible for eviction.
-const ENTRY_TTL: Duration = Duration::from_mins(10);
+const ENTRY_TTL: Duration = Duration::from_secs(600);
 
 /// How often the background cleanup task runs.
-const CLEANUP_INTERVAL: Duration = Duration::from_mins(1);
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Packed per-key state. ~32B: TB (16) + SW (16) + `last_touch` (8) + alignment.
 struct Entry {

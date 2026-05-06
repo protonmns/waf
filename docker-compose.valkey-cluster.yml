@@ -1,0 +1,190 @@
+# PRX-WAF + Valkey 3-node cluster setup (cache backend = cluster mode).
+#
+# USAGE:
+#   1. Start cluster (Valkey nodes + WAF):
+#        docker compose -f docker-compose.valkey-cluster.yml up -d
+#
+#   2. Wait for Valkey cluster init (one-shot container exits automatically).
+#
+#   3. Verify WAF is healthy:
+#        curl http://localhost:16827/health
+#        curl http://localhost:16827/api/cache/backend
+#
+# Cache config: configs/valkey-cluster.toml (mounted read-only)
+# Valkey admin UI is not included; use valkey-cli to inspect nodes.
+
+services:
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: valkey-cluster-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prx_waf
+      POSTGRES_PASSWORD: prx_waf
+      POSTGRES_DB: prx_waf
+    volumes:
+      - valkey_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prx_waf -d prx_waf"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - valkey_net
+
+  # ── Valkey nodes (3-node cluster, no replicas) ────────────────────────────
+  valkey-1:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: valkey-node-1
+    restart: unless-stopped
+    command: >
+      valkey-server
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --appendonly no
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --protected-mode no
+    volumes:
+      - valkey_data_1:/data
+    ports:
+      - "16381:6379"
+    networks:
+      valkey_net:
+        aliases:
+          - valkey-1
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey-2:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: valkey-node-2
+    restart: unless-stopped
+    command: >
+      valkey-server
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --appendonly no
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --protected-mode no
+    volumes:
+      - valkey_data_2:/data
+    ports:
+      - "16382:6379"
+    networks:
+      valkey_net:
+        aliases:
+          - valkey-2
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey-3:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: valkey-node-3
+    restart: unless-stopped
+    command: >
+      valkey-server
+        --cluster-enabled yes
+        --cluster-config-file /data/nodes.conf
+        --cluster-node-timeout 5000
+        --appendonly no
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --protected-mode no
+    volumes:
+      - valkey_data_3:/data
+    ports:
+      - "16383:6379"
+    networks:
+      valkey_net:
+        aliases:
+          - valkey-3
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── One-shot cluster initialiser ─────────────────────────────────────────────
+  # Creates the 3-node cluster topology; exits with code 0 on success.
+  valkey-init:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: valkey-init
+    depends_on:
+      valkey-1:
+        condition: service_healthy
+      valkey-2:
+        condition: service_healthy
+      valkey-3:
+        condition: service_healthy
+    command: >
+      sh -c "until valkey-cli --cluster create valkey-1:6379 valkey-2:6379 valkey-3:6379 --cluster-replicas 0 --cluster-yes; do echo 'cluster init retry...'; sleep 1; done"
+    restart: "no"
+    networks:
+      - valkey_net
+
+  # ── PRX-WAF ──────────────────────────────────────────────────────────────────
+  prx-waf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: valkey-cluster-waf
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey-init:
+        condition: service_completed_successfully
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-with-a-long-random-secret}
+      DATABASE_URL: postgresql://prx_waf:prx_waf@postgres:5432/prx_waf
+      CACHE_BACKEND: cluster
+    volumes:
+      # Mount cluster-specific config that sets backend="cluster" and seeds
+      - ./configs:/app/configs
+      - ./rules:/app/rules:ro
+      - waf_certs:/app/certs
+    ports:
+      - "16880:80"
+      - "16843:443"
+      - "16827:9527"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9527/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    cap_add:
+      - NET_ADMIN
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    networks:
+      - valkey_net
+
+networks:
+  valkey_net:
+    driver: bridge
+
+volumes:
+  valkey_postgres_data:
+    driver: local
+  valkey_data_1:
+    driver: local
+  valkey_data_2:
+    driver: local
+  valkey_data_3:
+    driver: local
+  waf_certs:
+    driver: local

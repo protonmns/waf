@@ -72,7 +72,12 @@ impl AppState {
     ///
     /// Returns an error if the `JWT_SECRET` environment variable is not set or empty.
     /// In production this ensures the operator explicitly configures a strong secret.
-    pub fn new(db: Arc<Database>, engine: Arc<WafEngine>, router: Arc<HostRouter>) -> anyhow::Result<Self> {
+    pub fn new(
+        db: Arc<Database>,
+        engine: Arc<WafEngine>,
+        router: Arc<HostRouter>,
+        cache: Arc<ResponseCache>,
+    ) -> anyhow::Result<Self> {
         let jwt_secret = std::env::var("JWT_SECRET")
             .ok()
             .filter(|s| !s.is_empty())
@@ -92,7 +97,7 @@ impl AppState {
             ws_connections: Arc::new(AtomicU32::new(0)),
             jwt_secret,
             notif_rate_limiter: crate::notifications::new_rate_limiter(),
-            cache: ResponseCache::new(256, 60, 3600),
+            cache,
             plugin_manager: Arc::new(PluginManager::new()),
             tunnel_registry: TunnelRegistry::new(),
             crowdsec_cache: None,

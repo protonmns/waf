@@ -18,6 +18,26 @@ services:
     ports:
       - "15432:5432"
 
+  # ── Standalone Valkey (cache backend = "standalone" in configs/default.toml) ─
+  # TCP service; WAF connects via seeds = ["valkey:6379"] on the Compose network.
+  valkey:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: prx-waf-valkey
+    restart: unless-stopped
+    command: >
+      valkey-server
+        --appendonly no
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --protected-mode no
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "16379:6379"
+
   # ── PRX-WAF ──────────────────────────────────────────────────────────────────
   prx-waf:
     build:
@@ -28,9 +48,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
     environment:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-with-a-long-random-secret}
       DATABASE_URL: postgresql://prx_waf:prx_waf@postgres:5432/prx_waf
+      # Cache: set [cache] backend = "standalone" and [cache.valkey] seeds in
+      # configs/default.toml (see docs/valkey-cache-guide.md §2.3). Compose does
+      # not override TOML via env.
     volumes:
       - ./configs:/app/configs      # rw: waf-panel.toml is written by the admin API
       - ./rules:/app/rules:ro

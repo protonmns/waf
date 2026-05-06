@@ -90,6 +90,31 @@ impl CompiledRuleSet {
             defaults: doc.defaults,
         })
     }
+
+    /// First matching cache rule for statistics routing (mirrors
+    /// [`crate::cache::gates::RouteRuleGate`] match order).
+    ///
+    /// Returns `None` when a rule matches with `ttl_seconds: 0` (explicit deny).
+    /// Returns `Some("_default")` when no rule matches (tier-default caching).
+    pub fn first_cacheable_rule_id(&self, host: &str, path: &str, method: &str) -> Option<Arc<str>> {
+        let host_lower_storage;
+        let host_lower: &str = if host.bytes().all(|b| !b.is_ascii_uppercase()) {
+            host
+        } else {
+            host_lower_storage = host.to_ascii_lowercase();
+            host_lower_storage.as_str()
+        };
+        for rule in self.rules.iter() {
+            if !rule.matches_str(host_lower, path, method) {
+                continue;
+            }
+            if rule.ttl.is_zero() {
+                return None;
+            }
+            return Some(Arc::clone(&rule.id));
+        }
+        Some(Arc::from("_default"))
+    }
 }
 
 fn approx_regex_cost(rule: &crate::cache::config::RuleDoc) -> usize {

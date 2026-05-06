@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
@@ -20,6 +20,7 @@ use pingora_core::upstreams::peer::HttpPeer;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 
 use waf_common::HostConfig;
+use waf_common::tier::CachePolicy;
 use waf_engine::WafEngine;
 use waf_engine::access::AccessLists;
 use waf_engine::device_fp::DeviceFpDetector;
@@ -29,7 +30,8 @@ use waf_engine::relay::RelayDetector;
 
 use crate::tiered::TierPolicyRegistry;
 
-use crate::context::{BODY_PREVIEW_LIMIT, GatewayCtx};
+use crate::cache::ResponseCache;
+use crate::context::{BODY_PREVIEW_LIMIT, GatewayCtx, ResponseCachePending};
 use crate::ctx_builder::RequestCtxBuilder;
 use crate::error_page::ErrorPageFactory;
 use crate::filters::{
@@ -79,6 +81,9 @@ pub struct WafProxy {
     /// FR-011 phase-02: behavioral anomaly recorder. Optional — `None` =
     /// no per-actor sliding-window state, classifiers downstream see no data.
     pub behavior_recorder: Option<Arc<BehaviorRecorder>>,
+    /// FR-009: same `Arc` as the management API — when set, GET responses may
+    /// be served from cache and cacheable upstream bodies are stored.
+    pub response_cache: Option<Arc<ResponseCache>>,
 }
 
 impl WafProxy {
@@ -100,6 +105,7 @@ impl WafProxy {
             relay_detector: None,
             device_fp_detector: None,
             behavior_recorder: None,
+            response_cache: None,
         }
     }
 
@@ -431,7 +437,43 @@ impl ProxyHttp for WafProxy {
         }
 
         let decision = self.engine.inspect(&mut request_ctx).await;
-        write_waf_decision(session, &decision, &request_ctx, &self.blocked_counter).await
+        if write_waf_decision(session, &decision, &request_ctx, &self.blocked_counter).await? {
+            return Ok(true);
+        }
+
+        if let Some(cache) = &self.response_cache
+            && request_ctx.method.eq_ignore_ascii_case("GET")
+            && !matches!(request_ctx.tier_policy.cache_policy, CachePolicy::NoCache)
+            && !request_ctx.headers.contains_key("authorization")
+            && request_ctx.cookies.is_empty()
+        {
+            let key = ResponseCache::make_key(
+                &request_ctx.method,
+                &request_ctx.host,
+                &request_ctx.path,
+                &request_ctx.query,
+            );
+            if let Some(entry) = cache.get(&key, request_ctx.tier).await {
+                crate::response_cache_integration::write_cached_entry(session, &entry).await?;
+                return Ok(true);
+            }
+            ctx.response_cache_store = Some(ResponseCachePending {
+                key,
+                host: request_ctx.host.clone(),
+                path: request_ctx.path.clone(),
+                tier: request_ctx.tier,
+                cache_policy: request_ctx.tier_policy.cache_policy.clone(),
+                has_authorization: false,
+                has_cookie: false,
+                status: 0,
+                headers: Vec::new(),
+                cache_control: None,
+                body: BytesMut::new(),
+                capture_started: false,
+            });
+        }
+
+        Ok(false)
     }
 
     async fn request_body_filter(
@@ -536,6 +578,19 @@ impl ProxyHttp for WafProxy {
                 debug!("body-mask: skipping non-identity content-encoding");
             }
         }
+
+        // Cache capture reads `Content-Encoding` from the same header map Pingora will
+        // stream (after response_chain above when host config exists), so misses without
+        // host context still observe identity/absent CE correctly.
+        if let Some(pending) = ctx.response_cache_store.as_mut()
+            && !crate::response_cache_integration::begin_upstream_cache_capture(
+                pending,
+                upstream_response,
+                ctx.body_mask.enabled,
+            )
+        {
+            ctx.response_cache_store = None;
+        }
         Ok(())
     }
 
@@ -549,14 +604,26 @@ impl ProxyHttp for WafProxy {
     where
         Self::CTX: Send + Sync,
     {
-        if !ctx.body_mask.enabled {
+        // Body mask runs first: when enabled, `begin_upstream_cache_capture` already
+        // declined capture (`capture_started == false`), so the cache branch below is a no-op.
+        if ctx.body_mask.enabled {
+            let Some(hc) = &ctx.host_config else {
+                return Ok(None);
+            };
+            let compiled = self.resolve_mask(hc);
+            apply_body_mask_chunk(&mut ctx.body_mask, &compiled, body, end_of_stream);
             return Ok(None);
         }
-        let Some(hc) = &ctx.host_config else {
-            return Ok(None);
-        };
-        let compiled = self.resolve_mask(hc);
-        apply_body_mask_chunk(&mut ctx.body_mask, &compiled, body, end_of_stream);
+
+        if let Some(cache) = &self.response_cache {
+            crate::response_cache_integration::cache_store_on_body_chunk(
+                cache,
+                &mut ctx.response_cache_store,
+                body,
+                end_of_stream,
+            );
+        }
+
         Ok(None)
     }
 
